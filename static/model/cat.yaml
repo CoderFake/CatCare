@@ -1,0 +1,4 @@
+train: /content/drive/MyDrive/Colab/Yolov11/try-11/train/images
+val: /content/drive/MyDrive/Colab/Yolov11/try-11/test/images
+nc: 6
+name: ['demodicosis', 'dermatitis', 'flea_allergy', 'fungus', 'ringworm', 'scabies']
