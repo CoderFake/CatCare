@@ -3,3 +3,8 @@ Django==5.2.3
 python-dotenv==1.1.0
 sqlparse==0.5.3
 whitenoise==6.9.0
+paho-mqtt==1.6.1
+opencv-python==4.8.1.78
+numpy==1.24.3
+ultralytics==8.0.196
+Pillow==10.0.1

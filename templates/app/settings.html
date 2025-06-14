@@ -1,0 +1,207 @@
+{% extends 'app/base.html' %}
+
+{% block title %}CatCare - Cài đặt{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <form method="post">
+        {% csrf_token %}
+        
+        <!-- Mode Settings -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-cogs me-2"></i>Chế độ hoạt động
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="mode-switch">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" id="modeSwitch" name="mode" value="auto"
+                               {% if system_settings.current_mode == 'auto' %}checked{% endif %}>
+                        <label class="form-check-label" for="modeSwitch">
+                            <strong>Chế độ tự động</strong>
+                        </label>
+                    </div>
+                    <small class="text-muted">
+                        Khi bật chế độ tự động, hệ thống sẽ cho mèo ăn theo lịch đã đặt
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Feeding Schedule -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-clock me-2"></i>Lịch cho ăn tự động
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="scheduleContainer">
+                    {% for schedule in feeding_schedules %}
+                    <div class="time-input-group">
+                        <div class="row align-items-center">
+                            <div class="col-8">
+                                <input type="time" class="form-control" name="schedule_time" 
+                                       value="{{ schedule.time|time:'H:i' }}" required>
+                            </div>
+                            <div class="col-4 text-end">
+                                <button type="button" class="remove-schedule-btn" data-action="remove-schedule">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    
+                    {% if not feeding_schedules %}
+                    <div class="time-input-group">
+                        <div class="row align-items-center">
+                            <div class="col-8">
+                                <input type="time" class="form-control" name="schedule_time" required>
+                            </div>
+                            <div class="col-4 text-end">
+                                <button type="button" class="remove-schedule-btn" data-action="remove-schedule">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <div class="text-center mt-3">
+                    <button type="button" class="add-schedule-btn" data-action="add-schedule">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+                
+                <div class="alert alert-info mt-3">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Lưu ý:</strong> Lịch cho ăn chỉ hoạt động khi chế độ tự động được bật
+                </div>
+            </div>
+        </div>
+
+        {% if feeding_schedules %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-list me-2"></i>Lịch hiện tại
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="schedule-container">
+                    {% for schedule in feeding_schedules %}
+                    <div class="schedule-item">
+                        <div>
+                            <i class="fas fa-clock me-2"></i>
+                            <strong>{{ schedule.time|time:"H:i" }}</strong>
+                            <small class="text-muted ms-2">hàng ngày</small>
+                        </div>
+                        <span class="badge bg-success">Hoạt động</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Save Button -->
+        <div class="text-center">
+            <button type="submit" class="btn btn-primary btn-lg px-5">
+                <i class="fas fa-save me-2"></i>Lưu cài đặt
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        // Thêm lịch cho ăn mới
+        function addSchedule() {
+            const $container = $('#scheduleContainer');
+            const $newSchedule = $('<div class="time-input-group">').html(`
+                <div class="row align-items-center">
+                    <div class="col-8">
+                        <input type="time" class="form-control" name="schedule_time" required>
+                    </div>
+                    <div class="col-4 text-end">
+                        <button type="button" class="remove-schedule-btn" data-action="remove-schedule">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `);
+            
+            $container.append($newSchedule);
+            // Focus vào input mới
+            $newSchedule.find('input').focus();
+        }
+        
+        // Xóa lịch cho ăn
+        function removeSchedule($button) {
+            const $scheduleItem = $button.closest('.time-input-group');
+            const $container = $('#scheduleContainer');
+            
+            // Không cho xóa nếu chỉ còn 1 item
+            if ($container.children().length > 1) {
+                $scheduleItem.remove();
+            } else {
+                // Reset giá trị thay vì xóa
+                $scheduleItem.find('input').val('');
+            }
+        }
+        
+        // Validate schedule times
+        function validateSchedules() {
+            const $timeInputs = $('input[name="schedule_time"]');
+            const times = [];
+            
+            for (let i = 0; i < $timeInputs.length; i++) {
+                const value = $timeInputs.eq(i).val();
+                if (value) {
+                    if (times.includes(value)) {
+                        alert('Không được đặt trùng giờ cho ăn!');
+                        $timeInputs.eq(i).focus();
+                        return false;
+                    }
+                    times.push(value);
+                }
+            }
+            return true;
+        }
+        
+        $(document).on('click', '[data-action="add-schedule"]', function() {
+            addSchedule();
+        });
+        
+        $(document).on('click', '[data-action="remove-schedule"]', function() {
+            removeSchedule($(this));
+        });
+        
+        $('#modeSwitch').on('change', function() {
+            const $label = $(this).next('label');
+            if ($(this).is(':checked')) {
+                $label.html('<strong>Chế độ tự động</strong>');
+            } else {
+                $label.html('<strong>Chế độ thủ công</strong>');
+            }
+        });
+        
+        $('form').on('submit', function(e) {
+            if (!validateSchedules()) {
+                e.preventDefault();
+                return false;
+            }
+            
+            const $submitBtn = $('button[type="submit"]');
+            $submitBtn.html('<i class="fas fa-spinner fa-spin me-2"></i>Đang lưu...');
+            $submitBtn.prop('disabled', true);
+        });
+    });
+</script>
+{% endblock %}

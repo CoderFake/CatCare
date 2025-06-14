@@ -1,0 +1,67 @@
+{% extends 'app/base.html' %}
+
+{% block title %}CatCare - Đăng nhập{% endblock %}
+
+{% block body_class %} class="login-page"{% endblock %}
+
+{% block navbar %}{% endblock %}
+
+{% block content %}
+<div class="floating-cat">
+    <i class="fas fa-cat"></i>
+</div>
+
+<div class="login-container">
+    <div class="logo">
+        <i class="fas fa-cat"></i>
+        <h2>CatCare</h2>
+        <p class="text-muted">Hệ thống chăm sóc mèo thông minh</p>
+    </div>
+    
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-circle me-2"></i>{{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-floating mb-3">
+            <input type="text" class="form-control" id="username" name="username" placeholder="Tên đăng nhập" required>
+            <label for="username">
+                <i class="fas fa-user me-2"></i>Tên đăng nhập
+            </label>
+        </div>
+        
+        <div class="form-floating mb-4">
+            <input type="password" class="form-control" id="password" name="password" placeholder="Mật khẩu" required>
+            <label for="password">
+                <i class="fas fa-lock me-2"></i>Mật khẩu
+            </label>
+        </div>
+        
+        <button type="submit" class="btn btn-login">
+            <i class="fas fa-sign-in-alt me-2"></i>Đăng nhập
+        </button>
+    </form>
+    
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        $('#username').focus();
+        
+        $('form').on('submit', function() {
+            const $submitBtn = $('.btn-login');
+            $submitBtn.html('<i class="fas fa-spinner fa-spin me-2"></i>Đang đăng nhập...');
+            $submitBtn.prop('disabled', true);
+        });
+    });
+</script>
+{% endblock %}

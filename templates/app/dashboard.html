@@ -1,0 +1,495 @@
+{% extends 'app/base.html' %}
+
+{% block title %}CatCare Dashboard{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <!-- Status Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-wifi fa-2x mb-2"></i>
+                <h6>Trạng thái thiết bị</h6>
+                <span id="deviceStatus" class="badge fs-6 {% if device_status == 'online' %}status-online{% else %}status-offline{% endif %}">
+                    {{ device_status|title }}
+                </span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-cogs fa-2x mb-2"></i>
+                <h6>Chế độ hoạt động</h6>
+                <span id="currentMode" class="fs-4 fw-bold mode-badge {% if current_mode == 'auto' %}mode-auto{% else %}mode-manual{% endif %}">
+                    {% if current_mode == 'auto' %}Tự động{% else %}Thủ công{% endif %}
+                </span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-clock fa-2x mb-2"></i>
+                <h6>Lịch đã đặt</h6>
+                <span class="fs-4 fw-bold">{{ feeding_schedules.count }}</span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-utensils fa-2x mb-2"></i>
+                <h6>Lần cho ăn hôm nay</h6>
+                <span class="fs-4 fw-bold">{{ feed_logs.count }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Video Stream -->
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-video me-2"></i>Camera trực tiếp
+                    </h5>
+                    <div id="cameraStatus" class="camera-status">
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="video-container">
+                        <img src="{% url 'app:video_feed' %}" class="video-stream" alt="Video Stream">
+                        <div class="position-absolute top-0 end-0 p-3">
+                            <button class="btn btn-detect" data-action="detect-disease">
+                                <i class="fas fa-search me-1"></i>Phát hiện bệnh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="col-lg-4">
+            <!-- Manual Feed -->
+            <div class="card mb-4 d-none">
+                <div class="card-header bg-transparent">
+                    <h6 class="mb-0">
+                        <i class="fas fa-hand-paper me-2"></i>Điều khiển thủ công
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <button class="btn btn-feed w-100 mb-3" data-action="manual-feed">
+                        <i class="fas fa-utensils me-2"></i>Cho ăn ngay
+                    </button>
+                    <div class="form-check form-switch d-flex justify-content-center">
+                        <input class="form-check-input" type="checkbox" id="modeSwitch" 
+                               {% if current_mode == 'auto' %}checked{% endif %} data-action="toggle-mode">
+                        <label class="form-check-label ms-2" for="modeSwitch">
+                            Chế độ tự động
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Feeding Logs -->
+            <div class="card mb-4">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-history me-2"></i>Lịch sử cho ăn gần đây
+                    </h6>
+                    <a href="{% url 'app:feeding_history' %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="fas fa-list me-1"></i>Xem tất cả
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if feed_logs %}
+                        <div class="feed-logs-container">
+                            {% for log in feed_logs %}
+                            <div class="feed-log">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span>
+                                        <i class="fas fa-utensils me-1"></i>
+                                        {% if log.mode == 'auto' %}Tự động{% else %}Thủ công{% endif %}
+                                    </span>
+                                    <small class="text-muted">{{ log.timestamp|date:"H:i d/m" }}</small>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center">Chưa có lịch sử cho ăn</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Feeding Schedules -->
+            <div class="card">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-clock me-2"></i>Lịch cho ăn
+                    </h6>
+                    <a href="{% url 'app:settings' %}" class="btn btn-outline-primary btn-sm">
+                        <i class="fas fa-plus me-1"></i>Thêm lịch
+                    </a>
+                </div>
+                <div class="card-body">
+                    {% if feeding_schedules %}
+                        <div class="schedule-container">
+                            {% for schedule in feeding_schedules %}
+                            <div class="schedule-item">
+                                <i class="fas fa-clock me-2"></i>
+                                {{ schedule.time|time:"H:i" }}
+                                {% if schedule.enabled %}
+                                    <span class="badge bg-success ms-2">Hoạt động</span>
+                                {% else %}
+                                    <span class="badge bg-secondary ms-2">Tắt</span>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-muted text-center">Chưa có lịch cho ăn</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Disease Detection Results -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div id="diseaseResults" style="display: none;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Floating Controls -->
+<!-- Desktop Version -->
+<div class="floating-controls d-none d-md-flex flex-column">
+    <button class="control-btn control-feed" data-action="manual-feed" title="Cho ăn">
+        <i class="fas fa-utensils"></i>
+    </button>
+    <button class="control-btn control-detect" data-action="detect-disease" title="Phát hiện bệnh">
+        <i class="fas fa-search"></i>
+    </button>
+    <button class="control-btn control-mode" data-action="toggle-mode-quick" title="Đổi chế độ">
+        <i class="fas fa-sync-alt"></i>
+    </button>
+</div>
+
+<!-- Mobile FAB Menu -->
+<div class="floating-controls d-md-none">
+    <div class="mobile-fab-menu">
+        <div class="fab-options" id="fabOptions">
+            <button class="control-btn control-mode" data-action="toggle-mode-quick" data-close-fab="true" title="Đổi chế độ">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+            <button class="control-btn control-detect" data-action="detect-disease" data-close-fab="true" title="Phát hiện bệnh">
+                <i class="fas fa-search"></i>
+            </button>
+            <button class="control-btn control-feed" data-action="manual-feed" data-close-fab="true" title="Cho ăn">
+                <i class="fas fa-utensils"></i>
+            </button>
+        </div>
+        <button class="fab-main" id="fabMain" data-action="toggle-fab-menu">
+            <i class="fas fa-plus"></i>
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        $('body').append('<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">');
+        
+        // Utility functions
+        function getCsrfToken() {
+            return $('[name=csrfmiddlewaretoken]').val();
+        }
+
+        function manualFeed() {
+            $.ajax({
+                url: "{% url 'app:manual_feed' %}",
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCsrfToken(),
+                    'Content-Type': 'application/json'
+                },
+                success: function(data) {
+                    if (data.success) {
+                        showAlert('success', data.message);
+                        // Cập nhật thống kê và lịch sử cho ăn
+                        updateFeedingData();
+                        setTimeout(updateStatus, 1000);
+                    } else {
+                        showAlert('danger', data.message);
+                    }
+                },
+                error: function() {
+                    showAlert('danger', 'Lỗi kết nối');
+                }
+            });
+        }
+
+        function toggleMode() {
+            const isAuto = $('#modeSwitch').is(':checked');
+            const mode = isAuto ? 'auto' : 'manual';
+            
+            $.ajax({
+                url: "{% url 'app:change_mode' %}",
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCsrfToken(),
+                    'Content-Type': 'application/json'
+                },
+                data: JSON.stringify({mode: mode}),
+                success: function(data) {
+                    if (data.success) {
+                        updateModeDisplay(data.mode);
+                        showAlert('success', `Đã chuyển sang chế độ ${data.mode === 'auto' ? 'tự động' : 'thủ công'}`);
+                    } else {
+                        $('#modeSwitch').prop('checked', !isAuto);
+                        showAlert('danger', data.message);
+                    }
+                },
+                error: function() {
+                    $('#modeSwitch').prop('checked', !isAuto);
+                    showAlert('danger', 'Lỗi kết nối');
+                }
+            });
+        }
+
+        function detectDisease() {
+            showAlert('info', 'Đang phân tích hình ảnh...');
+            
+            $.ajax({
+                url: "{% url 'app:detect_disease' %}",
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCsrfToken(),
+                    'Content-Type': 'application/json'
+                },
+                success: function(data) {
+                    displayDiseaseResults(data);
+                },
+                error: function() {
+                    showAlert('danger', 'Lỗi phân tích hình ảnh');
+                }
+            });
+        }
+
+        function displayDiseaseResults(data) {
+            const $resultsDiv = $('#diseaseResults');
+            
+            if (data.success) {
+                if (data.diseases.length > 0) {
+                    let html = '<div class="alert alert-custom alert-warning"><h6><i class="fas fa-exclamation-triangle me-2"></i>Phát hiện bệnh trên mèo:</h6>';
+                    
+                    data.diseases.forEach(disease => {
+                        html += `<div class="disease-alert mt-3">
+                            <strong>${disease.disease}</strong> - Độ tin cậy: ${disease.confidence.toFixed(1)}%
+                        </div>`;
+                    });
+                    
+                    html += '</div>';
+                    $resultsDiv.html(html);
+                    
+                    const topDisease = data.diseases[0];
+                    updateCameraStatus({
+                        device_status: 'online',
+                        disease_info: {
+                            detected: true,
+                            name: topDisease.disease,
+                            confidence: topDisease.confidence.toFixed(1)
+                        }
+                    });
+                } else {
+                    $resultsDiv.html('<div class="alert alert-custom alert-success"><i class="fas fa-check-circle me-2"></i>Không phát hiện bệnh trên mèo</div>');
+                    
+                    updateCameraStatus({
+                        device_status: 'online',
+                        disease_info: { detected: false }
+                    });
+                }
+            } else {
+                $resultsDiv.html(`<div class="alert alert-custom alert-danger"><i class="fas fa-times-circle me-2"></i>${data.message}</div>`);
+            }
+            
+            $resultsDiv.show();
+            $resultsDiv[0].scrollIntoView({behavior: 'smooth'});
+        }
+
+        function updateModeDisplay(mode) {
+            const $modeElement = $('#currentMode');
+            $modeElement.removeClass('mode-auto mode-manual').addClass(`mode-badge ${mode === 'auto' ? 'mode-auto' : 'mode-manual'}`);
+            $modeElement.text(mode === 'auto' ? 'Tự động' : 'Thủ công');
+        }
+
+        function updateStatus() {
+            $.ajax({
+                url: "{% url 'app:get_status' %}",
+                method: 'GET',
+                success: function(data) {
+                    const $statusElement = $('#deviceStatus');
+                    $statusElement.removeClass('status-online status-offline')
+                               .addClass(`badge fs-6 ${data.device_status === 'online' ? 'status-online' : 'status-offline'}`)
+                               .text(data.device_status === 'online' ? 'Online' : 'Offline');
+                    
+                    updateModeDisplay(data.current_mode);
+                    $('#modeSwitch').prop('checked', data.current_mode === 'auto');
+                    
+                    updateCameraStatus(data);
+                },
+                error: function() {
+                    console.log('Lỗi cập nhật trạng thái');
+                    updateCameraStatus({camera_error: 'Lỗi kết nối camera'});
+                }
+            });
+        }
+
+        function updateCameraStatus(data) {
+            const $cameraStatus = $('#cameraStatus');
+            
+            $cameraStatus.removeClass('error disease-detected healthy');
+            
+            if (data.camera_error) {
+                $cameraStatus.addClass('error')
+                            .html(`<i class="fas fa-exclamation-triangle me-1"></i>${data.camera_error}`);
+            } else if (data.disease_info && data.disease_info.detected) {
+                const disease = data.disease_info;
+                $cameraStatus.addClass('disease-detected')
+                            .html(`<i class="fas fa-virus me-1"></i>${disease.name} (${disease.confidence}%)`);
+            } else if (data.device_status === 'online') {
+                $cameraStatus.addClass('healthy')
+                            .html(`<i class="fas fa-check-circle me-1"></i>Camera hoạt động bình thường`);
+            } else {
+                $cameraStatus.addClass('error')
+                            .html(`<i class="fas fa-wifi-slash me-1"></i>Thiết bị offline`);
+            }
+        }
+
+        function updateFeedingData() {
+            $.ajax({
+                url: "{% url 'app:get_feeding_data' %}",
+                method: 'GET',
+                success: function(data) {
+                    if (data.success) {
+                        const $statsCard = $('.stats-card').eq(3);
+                        const $countElement = $statsCard.find('.fs-4.fw-bold');
+                        
+                        $countElement.text(data.today_feed_count);
+                        $statsCard.addClass('stats-updated');
+                        
+                        setTimeout(function() {
+                            $statsCard.removeClass('stats-updated');
+                        }, 600);
+                        
+                        updateFeedingHistory(data.recent_feeds);
+                    }
+                },
+                error: function() {
+                    console.log('Lỗi cập nhật dữ liệu cho ăn');
+                }
+            });
+        }
+
+        function updateFeedingHistory(feeds) {
+            const $container = $('.feed-logs-container');
+            
+            if (feeds && feeds.length > 0) {
+                let html = '';
+                feeds.forEach(function(feed, index) {
+                    const feedTime = new Date(feed.timestamp).toLocaleString('vi-VN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        day: '2-digit',
+                        month: '2-digit'
+                    });
+                    
+                    const newFeedClass = index === 0 ? 'new-feed' : '';
+                    
+                    html += `
+                        <div class="feed-log ${newFeedClass}">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span>
+                                    <i class="fas fa-utensils me-1"></i>
+                                    ${feed.mode === 'auto' ? 'Tự động' : 'Thủ công'}
+                                </span>
+                                <small class="text-muted">${feedTime}</small>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                $container.html(html);
+                
+                $container.scrollTop(0);
+                
+                setTimeout(function() {
+                    $('.feed-log.new-feed').removeClass('new-feed');
+                }, 500);
+            } else {
+                $container.parent().html('<p class="text-muted text-center">Chưa có lịch sử cho ăn</p>');
+            }
+        }
+
+        function showAlert(type, message) {
+            const $alertDiv = $(`
+                <div class="alert alert-${type} alert-dismissible fade show position-fixed" 
+                     style="top: 20px; right: 20px; z-index: 9999; min-width: 300px;">
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `);
+            
+            $('body').append($alertDiv);
+            
+            setTimeout(function() {
+                $alertDiv.remove();
+            }, 5000);
+        }
+
+        // FAB Menu Controls
+        function toggleFabMenu() {
+            $('#fabMain, #fabOptions').toggleClass('active');
+        }
+        
+        function closeFabMenu() {
+            $('#fabMain, #fabOptions').removeClass('active');
+        }
+        
+        function toggleModeQuick() {
+            const $modeSwitch = $('#modeSwitch');
+            if ($modeSwitch.length) {
+                $modeSwitch.prop('checked', !$modeSwitch.is(':checked'));
+                toggleMode();
+            }
+        }
+
+        // Event handlers
+        $(document).on('click', '[data-action="manual-feed"]', function() {
+            manualFeed();
+            if ($(this).data('close-fab')) closeFabMenu();
+        });
+
+        $(document).on('change', '[data-action="toggle-mode"]', function() {
+            toggleMode();
+        });
+
+        $(document).on('click', '[data-action="detect-disease"]', function() {
+            detectDisease();
+            if ($(this).data('close-fab')) closeFabMenu();
+        });
+
+        $(document).on('click', '[data-action="toggle-mode-quick"]', function() {
+            toggleModeQuick();
+            if ($(this).data('close-fab')) closeFabMenu();
+        });
+
+        $(document).on('click', '[data-action="toggle-fab-menu"]', function() {
+            toggleFabMenu();
+        });
+
+        updateStatus();
+        
+        setInterval(updateStatus, 30000);
+    });
+</script>
+{% endblock %}

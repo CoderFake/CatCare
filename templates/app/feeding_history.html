@@ -1,0 +1,314 @@
+{% extends 'app/base.html' %}
+
+{% block title %}Lịch sử cho ăn - CatCare{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <!-- Page Header -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">
+                        <i class="fas fa-history me-2"></i>Lịch sử cho ăn
+                    </h4>
+                    <a href="{% url 'app:dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                        <i class="fas fa-arrow-left me-1"></i>Quay lại
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-transparent">
+                    <h6 class="mb-0">
+                        <i class="fas fa-filter me-2"></i>Lọc theo ngày
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <form method="get" id="filterForm">
+                        <div class="row align-items-end">
+                            <div class="col-md-3">
+                                <label for="start_date" class="form-label">Từ ngày</label>
+                                <input type="date" class="form-control" id="start_date" name="start_date" 
+                                       value="{{ start_date|date:'Y-m-d' }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="end_date" class="form-label">Đến ngày</label>
+                                <input type="date" class="form-control" id="end_date" name="end_date" 
+                                       value="{{ end_date|date:'Y-m-d' }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label for="mode_filter" class="form-label">Chế độ</label>
+                                <select class="form-select" id="mode_filter" name="mode">
+                                    <option value="">Tất cả</option>
+                                    <option value="auto" {% if selected_mode == 'auto' %}selected{% endif %}>Tự động</option>
+                                    <option value="manual" {% if selected_mode == 'manual' %}selected{% endif %}>Thủ công</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="d-flex gap-2">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-search me-1"></i>Lọc
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary" id="resetFilter">
+                                        <i class="fas fa-undo me-1"></i>Reset
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-utensils fa-2x mb-2 text-primary"></i>
+                <h6>Tổng số lần</h6>
+                <span class="fs-4 fw-bold">{{ total_feeds }}</span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-robot fa-2x mb-2 text-success"></i>
+                <h6>Tự động</h6>
+                <span class="fs-4 fw-bold">{{ auto_feeds }}</span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-hand-paper fa-2x mb-2 text-warning"></i>
+                <h6>Thủ công</h6>
+                <span class="fs-4 fw-bold">{{ manual_feeds }}</span>
+            </div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="stats-card">
+                <i class="fas fa-calendar-day fa-2x mb-2 text-info"></i>
+                <h6>Số ngày</h6>
+                <span class="fs-4 fw-bold">{{ days_count }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feeding History Table -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">
+                        <i class="fas fa-list me-2"></i>Chi tiết lịch sử
+                        {% if logs %}
+                            <span class="badge bg-primary ms-2">{{ logs|length }} kết quả</span>
+                        {% endif %}
+                    </h6>
+                    {% if logs %}
+                    <button class="btn btn-outline-success btn-sm" id="exportBtn">
+                        <i class="fas fa-download me-1"></i>Xuất Excel
+                    </button>
+                    {% endif %}
+                </div>
+                <div class="card-body">
+                    {% if logs %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th scope="col">#</th>
+                                        <th scope="col">Ngày giờ</th>
+                                        <th scope="col">Chế độ</th>
+                                        <th scope="col">Trạng thái</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for log in logs %}
+                                    <tr>
+                                        <td>{{ forloop.counter }}</td>
+                                        <td>
+                                            <div class="d-flex flex-column">
+                                                <span class="fw-bold">{{ log.timestamp|date:"d/m/Y" }}</span>
+                                                <small class="text-muted">{{ log.timestamp|date:"H:i:s" }}</small>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            {% if log.mode == 'auto' %}
+                                                <span class="badge bg-success">
+                                                    <i class="fas fa-robot me-1"></i>Tự động
+                                                </span>
+                                            {% else %}
+                                                <span class="badge bg-warning">
+                                                    <i class="fas fa-hand-paper me-1"></i>Thủ công
+                                                </span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary">
+                                                <i class="fas fa-check me-1"></i>Thành công
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Pagination -->
+                        {% if logs.has_other_pages %}
+                        <nav aria-label="Pagination">
+                            <ul class="pagination justify-content-center mt-4">
+                                {% if logs.has_previous %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ logs.previous_page_number }}{% if request.GET.start_date %}&start_date={{ request.GET.start_date }}{% endif %}{% if request.GET.end_date %}&end_date={{ request.GET.end_date }}{% endif %}{% if request.GET.mode %}&mode={{ request.GET.mode }}{% endif %}">
+                                            <i class="fas fa-chevron-left"></i>
+                                        </a>
+                                    </li>
+                                {% endif %}
+
+                                {% for num in logs.paginator.page_range %}
+                                    {% if logs.number == num %}
+                                        <li class="page-item active">
+                                            <span class="page-link">{{ num }}</span>
+                                        </li>
+                                    {% elif num > logs.number|add:'-3' and num < logs.number|add:'3' %}
+                                        <li class="page-item">
+                                            <a class="page-link" href="?page={{ num }}{% if request.GET.start_date %}&start_date={{ request.GET.start_date }}{% endif %}{% if request.GET.end_date %}&end_date={{ request.GET.end_date }}{% endif %}{% if request.GET.mode %}&mode={{ request.GET.mode }}{% endif %}">{{ num }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+
+                                {% if logs.has_next %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ logs.next_page_number }}{% if request.GET.start_date %}&start_date={{ request.GET.start_date }}{% endif %}{% if request.GET.end_date %}&end_date={{ request.GET.end_date }}{% endif %}{% if request.GET.mode %}&mode={{ request.GET.mode }}{% endif %}">
+                                            <i class="fas fa-chevron-right"></i>
+                                        </a>
+                                    </li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                        {% endif %}
+                    {% else %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                            <h5 class="text-muted">Không có dữ liệu</h5>
+                            <p class="text-muted">Không tìm thấy lịch sử cho ăn trong khoảng thời gian đã chọn.</p>
+                            <a href="{% url 'app:dashboard' %}" class="btn btn-primary">
+                                <i class="fas fa-home me-1"></i>Về Dashboard
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    $(document).ready(function() {
+        // Set default dates if not provided
+        const today = new Date();
+        const oneWeekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+        
+        if (!$('#start_date').val()) {
+            $('#start_date').val(oneWeekAgo.toISOString().split('T')[0]);
+        }
+        
+        if (!$('#end_date').val()) {
+            $('#end_date').val(today.toISOString().split('T')[0]);
+        }
+        
+        // Reset filter
+        $('#resetFilter').on('click', function() {
+            $('#start_date').val(oneWeekAgo.toISOString().split('T')[0]);
+            $('#end_date').val(today.toISOString().split('T')[0]);
+            $('#mode_filter').val('');
+            $('#filterForm').submit();
+        });
+        
+        // Auto submit on date change
+        $('#start_date, #end_date, #mode_filter').on('change', function() {
+            // Validate date range
+            const startDate = new Date($('#start_date').val());
+            const endDate = new Date($('#end_date').val());
+            
+            if (startDate > endDate) {
+                alert('Ngày bắt đầu không thể lớn hơn ngày kết thúc!');
+                return;
+            }
+            
+            $('#filterForm').submit();
+        });
+        
+        // Export to Excel functionality
+        $('#exportBtn').on('click', function() {
+            const params = new URLSearchParams(window.location.search);
+            params.set('export', 'excel');
+            window.location.href = '{% url "app:feeding_history" %}?' + params.toString();
+        });
+        
+        // Quick date filters
+        function addQuickFilters() {
+            const quickFiltersHtml = `
+                <div class="mt-3">
+                    <small class="text-muted">Lọc nhanh:</small>
+                    <div class="btn-group btn-group-sm ms-2" role="group">
+                        <button type="button" class="btn btn-outline-primary quick-filter" data-days="1">Hôm nay</button>
+                        <button type="button" class="btn btn-outline-primary quick-filter" data-days="7">7 ngày</button>
+                        <button type="button" class="btn btn-outline-primary quick-filter" data-days="30">30 ngày</button>
+                        <button type="button" class="btn btn-outline-primary quick-filter" data-days="90">3 tháng</button>
+                    </div>
+                </div>
+            `;
+            
+            $('.card-body form').append(quickFiltersHtml);
+        }
+        
+        addQuickFilters();
+        
+        // Quick filter handlers
+        $(document).on('click', '.quick-filter', function() {
+            const days = parseInt($(this).data('days'));
+            const endDate = new Date();
+            const startDate = new Date(endDate.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+            
+            $('#start_date').val(startDate.toISOString().split('T')[0]);
+            $('#end_date').val(endDate.toISOString().split('T')[0]);
+            $('#filterForm').submit();
+        });
+        
+        // Highlight active quick filter
+        function highlightActiveFilter() {
+            const startDate = new Date($('#start_date').val());
+            const endDate = new Date($('#end_date').val());
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const diffTime = Math.abs(endDate - startDate);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+            
+            $('.quick-filter').removeClass('active');
+            
+            if (diffDays === 1 && startDate.toDateString() === today.toDateString()) {
+                $('.quick-filter[data-days="1"]').addClass('active');
+            } else if (diffDays === 7) {
+                $('.quick-filter[data-days="7"]').addClass('active');
+            } else if (diffDays === 30) {
+                $('.quick-filter[data-days="30"]').addClass('active');
+            } else if (diffDays === 90) {
+                $('.quick-filter[data-days="90"]').addClass('active');
+            }
+        }
+        
+        setTimeout(highlightActiveFilter, 100);
+    });
+</script>
+{% endblock %} 
