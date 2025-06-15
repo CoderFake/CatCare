@@ -153,12 +153,40 @@ def get_disease_detector():
     return get_disease_detector._instance
 
 
-def create_blank_frame():
+def create_blank_frame(message="Waiting for camera..."):
     """
     Tạo frame trống khi không có camera
     """
     blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(blank_frame, 'Watting for camera...', (150, 240), 
-               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    
+    # Tính toán vị trí text để center
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.8
+    thickness = 2
+    
+    # Chia message thành nhiều dòng nếu quá dài
+    lines = []
+    if len(message) > 30:
+        words = message.split(' ')
+        current_line = ""
+        for word in words:
+            if len(current_line + word) < 30:
+                current_line += word + " "
+            else:
+                lines.append(current_line.strip())
+                current_line = word + " "
+        if current_line:
+            lines.append(current_line.strip())
+    else:
+        lines = [message]
+    
+    # Vẽ từng dòng text
+    y_start = 220
+    for i, line in enumerate(lines):
+        text_size = cv2.getTextSize(line, font, font_scale, thickness)[0]
+        x = (640 - text_size[0]) // 2
+        y = y_start + (i * 40)
+        cv2.putText(blank_frame, line, (x, y), font, font_scale, (255, 255, 255), thickness)
+    
     _, buffer = cv2.imencode('.jpg', blank_frame)
     return buffer.tobytes()

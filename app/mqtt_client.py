@@ -14,48 +14,53 @@ class MQTTManager:
     
     def __init__(self):
         self.client = None
-        self.latest_image = None
         self.device_status = "offline"
         self.is_connected = False
+        self.last_connect_time = 0
+        self.connect_attempts = 0
         
+        mqtt_settings = getattr(settings, 'MQTT_SETTINGS', {})
         self.topics = {
-            'feed': 'catcare/feed',
-            'mode': 'catcare/mode', 
-            'status': 'catcare/status',
-            'image': 'catcare/image',
-            'feed_log': 'catcare/feed_log',
-            'image_chunk': 'catcare/image_chunk'
+            'feed': mqtt_settings.get('TOPICS', {}).get('FEED', 'catcare/feed'),
+            'mode': mqtt_settings.get('TOPICS', {}).get('MODE', 'catcare/mode'),
+            'status': mqtt_settings.get('TOPICS', {}).get('STATUS', 'catcare/status'),
+            'feed_log': mqtt_settings.get('TOPICS', {}).get('FEED_LOG', 'catcare/feed_log'),
         }
         
-        self.image_chunks = {}
+        self.mqtt_settings = mqtt_settings
         
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             print("MQTT kết nối thành công")
             self.is_connected = True
-            for topic in self.topics.values():
-                client.subscribe(topic)
+            self.connect_attempts = 0 
+            for topic_name, topic in self.topics.items():
+                result = client.subscribe(topic)
+                print(f"Subscribed to {topic_name}: {topic} - Result: {result}")
         else:
             print(f"MQTT kết nối thất bại với code {rc}")
             self.is_connected = False
+            self.connect_attempts += 1
     
     def on_disconnect(self, client, userdata, rc):
-        print("MQTT ngắt kết nối")
         self.is_connected = False
+        current_time = time.time()
+        
+        if rc == 0 or (current_time - self.last_connect_time) > 30:
+            if rc != 0:
+                print(f"MQTT ngắt kết nối bất ngờ (code: {rc}), attempts: {self.connect_attempts}")
+            else:
+                print("MQTT ngắt kết nối bình thường")
+            self.last_connect_time = current_time
         
     def on_message(self, client, userdata, msg):
         try:
             topic = msg.topic
             payload = json.loads(msg.payload.decode())
             
-            if topic == self.topics['image']:
-                self._handle_image(payload)
-                
-            elif topic == self.topics['image_chunk']:
-                self._handle_image_chunk(payload)
-                
-            elif topic == self.topics['status']:
+            if topic == self.topics['status']:
                 self.device_status = payload.get('status', 'offline')
+                print(f"Device status updated: {self.device_status}")
                 
             elif topic == self.topics['feed_log']:
                 self._handle_feed_log(payload)
@@ -63,41 +68,7 @@ class MQTTManager:
         except Exception as e:
             print(f"Lỗi xử lý MQTT message: {e}")
     
-    def _handle_image(self, payload):
-        try:
-            image_data = base64.b64decode(payload['image'])
-            self.latest_image = {
-                'data': image_data,
-                'timestamp': payload['timestamp'],
-                'format': payload.get('format', 'jpeg')
-            }
-        except Exception as e:
-            print(f"Lỗi xử lý ảnh: {e}")
-    
-    def _handle_image_chunk(self, payload):
-        try:
-            chunk_id = payload['chunk']
-            total_chunks = payload['total']
-            data = payload['data']
-            
-            if 'current_image' not in self.image_chunks:
-                self.image_chunks['current_image'] = {}
-            
-            self.image_chunks['current_image'][chunk_id] = data
-            
-            if len(self.image_chunks['current_image']) == total_chunks:
-                full_data = ""
-                for i in range(total_chunks):
-                    full_data += self.image_chunks['current_image'][i]
-                
-                image_payload = json.loads(full_data)
-                self._handle_image(image_payload)
-                
-                self.image_chunks['current_image'] = {}
-                
-        except Exception as e:
-            print(f"Lỗi xử lý image chunk: {e}")
-    
+
     def _handle_feed_log(self, payload):
         try:
             from .models import FeedingLog
@@ -113,16 +84,38 @@ class MQTTManager:
         except Exception as e:
             print(f"Lỗi lưu feed log: {e}")
     
+
+    
     def connect(self):
         try:
-            self.client = mqtt.Client()
+            # Tạo client_id unique để tránh conflict
+            import uuid
+            client_id = f"Django_CatCare_{uuid.uuid4().hex[:8]}"
+            self.client = mqtt.Client(client_id)
+            
+            # Cấu hình keep alive và reconnect với backoff
+            self.client.keepalive = 60
+            self.client.reconnect_delay_set(min_delay=5, max_delay=300)
+            
+            # Cấu hình will message để báo offline khi mất kết nối
+            self.client.will_set(self.topics['status'], 
+                               json.dumps({'status': 'offline', 'timestamp': time.time()}), 
+                               qos=1, retain=True)
+            
+            # Set username/password nếu có
+            username = self.mqtt_settings.get('USERNAME', '')
+            password = self.mqtt_settings.get('PASSWORD', '')
+            if username and password:
+                self.client.username_pw_set(username, password)
+            
             self.client.on_connect = self.on_connect
             self.client.on_disconnect = self.on_disconnect  
             self.client.on_message = self.on_message
             
-            broker = getattr(settings, 'MQTT_BROKER', 'broker.emqx.io')
-            port = getattr(settings, 'MQTT_PORT', 1883)
+            broker = self.mqtt_settings.get('BROKER', 'broker.emqx.io')
+            port = self.mqtt_settings.get('PORT', 1883)
             
+            print(f"Connecting to MQTT broker: {broker}:{port} with client_id: {client_id}")
             self.client.connect(broker, port, 60)
             self.client.loop_start()
             
@@ -130,25 +123,43 @@ class MQTTManager:
             print(f"Lỗi kết nối MQTT: {e}")
     
     def publish_feed_command(self, mode='manual'):
-        if self.client and self.is_connected:
+        if self.ensure_connection():
             self.client.publish(self.topics['feed'], mode)
             return True
         return False
     
     def publish_mode_change(self, mode):
-        if self.client and self.is_connected:
+        if self.ensure_connection():
             self.client.publish(self.topics['mode'], mode)
             return True
         return False
     
-    def get_latest_image(self):
-        return self.latest_image
+
     
     def get_device_status(self):
         return self.device_status
     
     def is_device_connected(self):
         return self.is_connected and self.device_status == "online"
+    
+
+    
+    def ensure_connection(self):
+        """
+        Đảm bảo kết nối MQTT, reconnect nếu cần
+        """
+        if not self.is_connected and self.client:
+            try:
+                current_time = time.time()
+                if (current_time - self.last_connect_time) > 10:
+                    print("Attempting MQTT reconnect...")
+                    self.client.reconnect()
+                    self.last_connect_time = current_time
+            except Exception as e:
+                print(f"Lỗi reconnect MQTT: {e}")
+        return self.is_connected
+    
+
 
 
 mqtt_manager = MQTTManager()
