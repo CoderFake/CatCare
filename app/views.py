@@ -124,18 +124,14 @@ def settings_view(request):
 @require_POST
 def manual_feed(request):
     """
-    Cho ăn thủ công
+    Cho ăn thủ công - chỉ gửi lệnh, không tạo log ngay
     """
     mqtt_manager = get_mqtt_manager()
     
     if mqtt_manager.publish_feed_command('manual'):
-        FeedingLog.objects.create(
-            user=request.user,
-            mode='manual'
-        )
         return JsonResponse({
             'success': True, 
-            'message': 'Đã gửi lệnh cho ăn'
+            'message': 'Đã gửi lệnh cho ăn, đang chờ xác nhận từ thiết bị...'
         })
     else:
         return JsonResponse({
@@ -200,7 +196,7 @@ def video_feed(request):
         import numpy as np
         from django.conf import settings
         
-        esp32_ip = getattr(settings, 'ESP32_IP', '192.168.100.141')
+        esp32_ip = settings.ESP32_IP
         stream_url = f"http://{esp32_ip}/stream"
         
         try:
@@ -217,7 +213,6 @@ def video_feed(request):
                 if chunk:
                     buffer += chunk
                     
-                    # Tìm JPEG frames trong buffer
                     while True:
                         start = buffer.find(b'\xff\xd8')
                         if start == -1:
@@ -227,17 +222,14 @@ def video_feed(request):
                         if end == -1:
                             break
                             
-                        # Extract JPEG frame
                         jpeg_data = buffer[start:end+2]
                         buffer = buffer[end+2:]
                         
-                        if len(jpeg_data) > 1000:  # Chỉ xử lý frame đủ lớn
-                            # Decode và apply flip với OpenCV
+                        if len(jpeg_data) > 1000:  
                             nparr = np.frombuffer(jpeg_data, np.uint8)
                             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             
                             if img is not None:
-                                # Apply flip settings
                                 camera_settings = getattr(settings, 'CAMERA_SETTINGS', {})
                                 
                                 if camera_settings.get('FLIP_HORIZONTAL', False):
@@ -291,24 +283,21 @@ def process_image_flip(image_data):
         
         camera_settings = getattr(settings, 'CAMERA_SETTINGS', {})
         
-        # Decode image
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
             return image_data
         
-        # Apply flips theo settings
         if camera_settings.get('FLIP_HORIZONTAL', False):
-            img = cv2.flip(img, 1)  # Flip horizontal
+            img = cv2.flip(img, 1) 
             
         if camera_settings.get('FLIP_VERTICAL', False):
-            img = cv2.flip(img, 0)  # Flip vertical
+            img = cv2.flip(img, 0) 
             
         if camera_settings.get('ROTATE_180', False):
-            img = cv2.flip(img, -1)  # Rotate 180 degrees
+            img = cv2.flip(img, -1)  
         
-        # Encode lại thành JPEG
         _, buffer = cv2.imencode('.jpg', img)
         return buffer.tobytes()
         
@@ -318,26 +307,24 @@ def process_image_flip(image_data):
 
 def capture_frame_from_esp32():
     """
-    Capture một frame từ ESP32 stream để detect với OpenCV
+    Capture frame từ ESP32 RTSP
     """
     try:
         import cv2
         from django.conf import settings
         
-        esp32_ip = getattr(settings, 'ESP32_IP', '192.168.100.141')
-        stream_url = f"http://{esp32_ip}/stream"
+        esp32_ip = settings.ESP32_IP
+        rtsp_url = f"rtsp://{esp32_ip}:8554/mjpeg/1"
         
-        print(f"Capturing frame from ESP32: {stream_url}")
+        print(f"Capturing frame from ESP32 RTSP: {rtsp_url}")
         
-        # Sử dụng OpenCV để capture frame
-        cap = cv2.VideoCapture(stream_url)
+        cap = cv2.VideoCapture(rtsp_url)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_TIMEOUT, 5000)  
         
-        # Thử đọc frame vài lần để đảm bảo có frame mới nhất
         for i in range(5):
             ret, frame = cap.read()
             if ret:
-                # Apply flips theo settings
                 camera_settings = getattr(settings, 'CAMERA_SETTINGS', {})
                 
                 if camera_settings.get('FLIP_HORIZONTAL', False):
@@ -350,119 +337,27 @@ def capture_frame_from_esp32():
                     frame = cv2.flip(frame, -1)
                 
                 cap.release()
-                print("Successfully captured frame with OpenCV")
+                print("Successfully captured frame from RTSP with OpenCV")
                 return frame
         
         cap.release()
-        print("Failed to capture frame")
+        print("Failed to capture frame from RTSP")
         return None
         
     except Exception as e:
-        print(f"Lỗi capture frame với OpenCV: {e}")
+        print(f"Lỗi capture frame từ RTSP với OpenCV: {e}")
         return None
 
 
 @login_required
-@require_POST
 def detect_disease(request):
     """
-    Phát hiện bệnh trên mèo từ ESP32 stream
+    Real-time disease detection
     """
-    captured_frame = capture_frame_from_esp32()
-    
-    if captured_frame is None:
-        return JsonResponse({
-            'success': False,
-            'message': 'Không thể lấy hình ảnh từ ESP32'
-        })
-    
-    try:
-        from ultralytics import YOLO
-        import cv2
-        import numpy as np
-        from django.conf import settings
-        import os
-        
-        disease_mapping = {
-            'demodicosis': 'Ghẻ demodex',
-            'dermatitis': 'Viêm da',
-            'flea_allergy': 'Dị ứng bọ chét',
-            'fungus': 'Nấm da',
-            'ringworm': 'Nấm tròn',
-            'scabies': 'Ghẻ sarcoptic'
-        }
-        
-        model_path = os.path.join(settings.BASE_DIR, 'static', 'model', 'cat.pt')
-        
-        if not os.path.exists(model_path):
-            return JsonResponse({
-                'success': False,
-                'message': f'Model không tìm thấy tại: {model_path}'
-            })
-        
-        model = YOLO(model_path)
-        
-        img = captured_frame
-        
-        if img is None:
-            return JsonResponse({
-                'success': False,
-                'message': 'Không thể decode hình ảnh'
-            })
-        
-        results = model(img)
-        
-        cat_detected = False
-        cat_confidence = 0
-        diseases_detected = []
-        
-        camera_settings = getattr(settings, 'CAMERA_SETTINGS', {})
-        confidence_threshold = camera_settings.get('DETECTION_CONFIDENCE_THRESHOLD', 0.5)
-        
-        for result in results:
-            if result.boxes is not None and result.names is not None:
-                for box in result.boxes:
-                    conf = float(box.conf[0])
-                    cls_id = int(box.cls[0])
-                    class_name = result.names[cls_id]
-                    
-                    if conf >= confidence_threshold: 
-                        if class_name in disease_mapping:
-                            disease_vn_name = disease_mapping[class_name]
-                            diseases_detected.append({
-                                'disease': disease_vn_name,
-                                'confidence': int(conf * 100),
-                                'english_name': class_name
-                            })
-                        
-                        if not cat_detected or conf > cat_confidence:
-                            cat_detected = True
-                            cat_confidence = int(conf * 100)
-        
-        # Chỉ xử lý detection, không lưu vào MQTT
-        
-        if cat_detected:
-            if diseases_detected:
-                message = f'Phát hiện mèo ({cat_confidence}%) - Có {len(diseases_detected)} bệnh được phát hiện'
-            else:
-                message = f'Phát hiện mèo khỏe mạnh ({cat_confidence}%)'
-        else:
-            message = 'Không phát hiện mèo trong hình ảnh'
-        
-        return JsonResponse({
-            'success': True,
-            'diseases': diseases_detected,
-            'cat_detected': cat_detected,
-            'cat_confidence': cat_confidence,
-            'message': message,
-            'total_detections': len(diseases_detected)
-        })
-        
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'message': f'Lỗi phân tích: {str(e)}'
-        })
+    return JsonResponse({
+        'success': True,
+    'message': 'Real-time detection được xử lý qua WebSocket'
+    })
 
 
 @login_required
@@ -620,50 +515,3 @@ def get_feeding_data(request):
         'recent_feeds': feeds_data,
         'timestamp': timezone.now().isoformat()
     })
-
-
-@login_required
-def test_esp32_stream(request):
-    """
-    Test ESP32 stream để debug
-    """
-    import requests
-    from django.conf import settings
-    
-    esp32_ip = getattr(settings, 'ESP32_IP', '192.168.100.141')
-    stream_url = f"http://{esp32_ip}/stream"
-    
-    try:
-        print(f"Testing ESP32 stream: {stream_url}")
-        
-        # Test với timeout ngắn
-        response = requests.get(stream_url, timeout=5, stream=False)
-        
-        info = {
-            'url': stream_url,
-            'status_code': response.status_code,
-            'headers': dict(response.headers),
-            'content_length': len(response.content),
-            'content_preview': response.content[:200].hex() if response.content else 'No content'
-        }
-        
-        return JsonResponse({
-            'success': True,
-            'info': info
-        })
-        
-    except requests.exceptions.Timeout:
-        return JsonResponse({
-            'success': False,
-            'error': 'Timeout - ESP32 không phản hồi trong 5 giây'
-        })
-    except requests.exceptions.ConnectionError:
-        return JsonResponse({
-            'success': False,
-            'error': 'Connection Error - Không thể kết nối tới ESP32'
-        })
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'error': f'Lỗi: {str(e)}'
-        })

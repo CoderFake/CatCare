@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'app',
 ]
 
@@ -97,7 +98,6 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
-# MQTT Settings
 MQTT_SETTINGS = {
     'BROKER': os.getenv('MQTT_BROKER', 'broker.emqx.io'),
     'PORT': int(os.getenv('MQTT_PORT', '1883')),
@@ -116,17 +116,28 @@ MQTT_SETTINGS = {
     }
 }
 
-# Camera Settings
 CAMERA_SETTINGS = {
-    'FLIP_HORIZONTAL': os.getenv('CAMERA_FLIP_HORIZONTAL', 'False').lower() == 'true',
-    'FLIP_VERTICAL': os.getenv('CAMERA_FLIP_VERTICAL', 'False').lower() == 'true',
+    'FLIP_HORIZONTAL': os.getenv('CAMERA_FLIP_HORIZONTAL', 'True').lower() == 'true',
+    'FLIP_VERTICAL': os.getenv('CAMERA_FLIP_VERTICAL', 'True').lower() == 'true',
     'ROTATE_180': os.getenv('CAMERA_ROTATE_180', 'False').lower() == 'true',
     'DETECTION_ENABLED': os.getenv('CAMERA_DETECTION_ENABLED', 'True').lower() == 'true',
-    'DETECTION_INTERVAL': int(os.getenv('CAMERA_DETECTION_INTERVAL', '5')),  # seconds
+    'DETECTION_INTERVAL': int(os.getenv('CAMERA_DETECTION_INTERVAL', '5')),
     'DETECTION_CONFIDENCE_THRESHOLD': float(os.getenv('DETECTION_CONFIDENCE_THRESHOLD', '0.5')),
 }
 
 
-# ESP32 Settings
-ESP32_IP = os.getenv('ESP32_IP', '192.168.100.141')
+ESP32_IP = os.getenv('ESP32_IP', '192.168.88.235')
 ESP32_STREAM_URL = f"http://{ESP32_IP}/stream"
+
+ASGI_APPLICATION = 'CatCare.asgi.application'
+
+import django
+from django.conf import settings
+if not settings.configured:
+    django.setup()
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}

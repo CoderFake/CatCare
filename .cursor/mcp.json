@@ -1,0 +1,56 @@
+{
+    "mcpServers": {
+      "GitLab communication server": {
+        "command": "docker",
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GITLAB_PERSONAL_ACCESS_TOKEN",
+          "-e",
+          "GITLAB_API_URL",
+          "-e",
+          "GITLAB_READ_ONLY_MODE",
+          "-e",
+          "USE_MILESTONE",
+          "-e",
+          "USE_PIPELINE",
+          "iwakitakuma/gitlab-mcp"
+        ],
+        "env": {
+          "GITLAB_PERSONAL_ACCESS_TOKEN": "your_token",
+          "GITLAB_API_URL": "https://gitlab.newwave.vn/api/v4",
+          "GITLAB_READ_ONLY_MODE": "false",
+          "USE_MILESTONE": "true",
+          "USE_PIPELINE": "true"
+        }
+      },
+      "postgresql-mcp": {
+        "command": "npx",
+        "args": [
+          "@henkey/postgres-mcp-server",
+          "--connection-string", "postgresql://postgres:postgres@localhost:17000/newwave_chatbot"
+        ]
+      },
+      "milvus": {
+        "command": "uv",
+        "args": [
+          "--directory",
+          "~/Documents/projects/mcp-server-milvus/src/mcp_server_milvus",
+          "run",
+          "server.py",
+          "--milvus-uri",
+          "http://127.0.0.1:19530"
+        ],
+        "stdio": {
+          "input": "pipe",
+          "output": "pipe",
+          "error": "pipe"
+        },
+        "env": {
+          "MILVUS_URI": "http://127.0.0.1:19530"
+        }
+      }
+    } 
+}

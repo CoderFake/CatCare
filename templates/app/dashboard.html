@@ -62,17 +62,17 @@
                     </div>
                     <div class="card-body p-0">
                         <div class="video-container">
-                            <img id="videoStream" src="{% url 'app:video_feed' %}" class="video-stream" alt="Video Stream" style="display: none;">
+                            <canvas id="videoCanvas" class="video-stream" style="display: none;"></canvas>
                             <div id="videoLoading" class="video-loading">
                                 <div class="text-center p-5">
                                     <i class="fas fa-spinner fa-spin fa-3x mb-3"></i>
-                                    <p>Đang kết nối camera...</p>
+                                    <p>Đang kết nối RTSP stream...</p>
                                 </div>
                             </div>
                             <div id="videoError" class="video-error" style="display: none;">
                                 <div class="text-center p-5">
                                     <i class="fas fa-exclamation-triangle fa-3x mb-3 text-warning"></i>
-                                    <p>Không thể kết nối camera</p>
+                                    <p>Không thể kết nối RTSP stream</p>
                                     <button class="btn btn-primary btn-sm" onclick="retryVideoConnection()">
                                         <i class="fas fa-redo me-1"></i>Thử lại
                                     </button>
@@ -80,11 +80,16 @@
                             </div>
                             <div class="position-absolute top-0 end-0 p-3">
                             <button class="btn btn-detect" data-action="detect-disease">
-                                    <i class="fas fa-search me-1"></i>Phát hiện bệnh
+                                    <i class="fas fa-search"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
+                </div>
+                
+                <!-- Disease Detection Results - Desktop Only -->
+                <div class="mt-3 d-none d-lg-block">
+                    <div id="diseaseResults" style="display: none;"></div>
                 </div>
             </div>
 
@@ -171,14 +176,21 @@
                             <p class="text-muted text-center">Chưa có lịch cho ăn</p>
                         {% endif %}
                     </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Disease Detection Results -->
-        <div class="row mt-4">
-            <div class="col-12">
-                <div id="diseaseResults" style="display: none;"></div>
+    <!-- Toast Container for Mobile -->
+    <div class="toast-container position-fixed top-0 end-0 p-3 d-lg-none">
+        <div id="diseaseToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <i class="fas fa-cat text-primary me-2"></i>
+                <strong class="me-auto"></strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="diseaseToastBody">
+                <!-- Toast content will be populated by JavaScript -->
             </div>
         </div>
     </div>
@@ -186,13 +198,13 @@
     <!-- Floating Controls -->
 <!-- Desktop Version -->
 <div class="floating-controls d-none d-md-flex flex-column">
-    <button class="control-btn control-feed" data-action="manual-feed" title="Cho ăn">
+    <button class="control-btn control-feed" data-action="manual-feed">
             <i class="fas fa-utensils"></i>
         </button>
-    <button class="control-btn control-detect" data-action="detect-disease" title="Phát hiện bệnh">
+    <button class="control-btn control-detect" data-action="detect-disease">
             <i class="fas fa-search"></i>
         </button>
-    <button class="control-btn control-mode" data-action="toggle-mode-quick" title="Đổi chế độ">
+    <button class="control-btn control-mode" data-action="toggle-mode-quick">
         <i class="fas fa-sync-alt"></i>
     </button>
 </div>
@@ -223,7 +235,9 @@
     $(document).ready(function() {
         $('body').append('<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">');
         
-        // Utility functions
+        let videoSocket = null;
+        let statusSocket = null;
+        
         function getCsrfToken() {
             return $('[name=csrfmiddlewaretoken]').val();
         }
@@ -239,7 +253,6 @@
                 success: function(data) {
                 if (data.success) {
                     showAlert('success', data.message);
-                        // Cập nhật thống kê và lịch sử cho ăn
                         updateFeedingData();
                         setTimeout(updateStatus, 1000);
                 } else {
@@ -280,24 +293,179 @@
             });
         }
 
+        let detectionActive = false;
+
         function detectDisease() {
-            showAlert('info', 'Đang phân tích hình ảnh...');
-            
-            $.ajax({
-                url: "{% url 'app:detect_disease' %}",
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCsrfToken(),
-                    'Content-Type': 'application/json'
-                },
-                success: function(data) {
-                    displayDiseaseResults(data);
-                },
-                error: function() {
-                    showAlert('danger', 'Lỗi phân tích hình ảnh');
+            if (!detectionActive) {
+                detectionActive = true;
+                
+                if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
+                    videoSocket.send(JSON.stringify({command: 'start_detection'}));
+                    showAlert('info', 'Bắt đầu phát hiện bệnh...');
+                    
+                    $('[data-action="detect-disease"]').html('<i class="fas fa-stop me-1"></i>');
+                } else {
+                    showAlert('danger', 'Chưa kết nối video stream');
                 }
-            });
+            } else {
+                detectionActive = false;
+                
+                if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
+                    videoSocket.send(JSON.stringify({command: 'stop_detection'}));
+                    showAlert('info', 'Đã dừng phát hiện bệnh');
+                }
+                
+                // Reset nút detect về trạng thái ban đầu
+                $('[data-action="detect-disease"]').html('<i class="fas fa-search"></i>');
+                
+                // Ẩn kết quả detection
+                $('#diseaseResults').hide();
+                
+                // Ẩn toast nếu có
+                const toast = bootstrap.Toast.getInstance(document.getElementById('diseaseToast'));
+                if (toast) {
+                    toast.hide();
+                }
+            }
         }
+        
+        function displayDetectionResults(data) {
+            const isMobile = window.innerWidth < 992;
+            
+            if (isMobile) {
+                showDiseaseToast(data);
+            } else {
+                showDiseaseAlert(data);
+            }
+            
+            updateDetectionCameraStatus(data);
+        }
+        
+        function showDiseaseAlert(data) {
+            const $resultsDiv = $('#diseaseResults');
+            
+            let html = '';
+            let alertType = 'info';
+            
+            if (data.cat_detected) {
+                if (data.diseases.length > 0) {
+                    alertType = 'warning';
+                    html = `<div class="alert alert-${alertType} alert-dismissible fade show">
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo (${data.cat_confidence}%) - Có ${data.total_detections} bệnh được phát hiện:</h6>`;
+                    
+                    data.diseases.forEach((disease, index) => {
+                        html += `<div class="disease-alert mt-2">
+                            <strong>${disease.disease}</strong> - Độ tin cậy: ${disease.confidence}%
+                            <small class="text-muted d-block">(${disease.english_name})</small>
+                        </div>`;
+                    });
+                    
+                    html += `<button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button></div>`;
+                } else {
+                    alertType = 'success';
+                    html = `<div class="alert alert-${alertType} alert-dismissible fade show">
+                        <i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh (${data.cat_confidence}%)
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                    </div>`;
+                }
+            } else {
+                alertType = 'info';
+                html = `<div class="alert alert-${alertType} alert-dismissible fade show">
+                    <i class="fas fa-search me-2"></i>Không phát hiện mèo trong video
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                </div>`;
+            }
+            
+            $resultsDiv.html(html);
+            $resultsDiv.show();
+        }
+        
+        function showDiseaseToast(data) {
+            const $toastBody = $('#diseaseToastBody');
+            const $toast = $('#diseaseToast');
+            
+            let content = '';
+            let toastClass = 'text-bg-info';
+            
+            if (data.cat_detected) {
+                if (data.diseases.length > 0) {
+                    toastClass = 'text-bg-warning';
+                    content = `<strong>Phát hiện mèo (${data.cat_confidence}%)</strong><br>`;
+                    content += `<small>Có ${data.total_detections} bệnh được phát hiện:</small><br>`;
+                    
+                    data.diseases.forEach((disease, index) => {
+                        content += `<small>• ${disease.disease} (${disease.confidence}%)</small><br>`;
+                    });
+                } else {
+                    toastClass = 'text-bg-success';
+                    content = `<strong>Phát hiện mèo khỏe mạnh</strong><br><small>Độ tin cậy: ${data.cat_confidence}%</small>`;
+                }
+            } else {
+                toastClass = 'text-bg-info';
+                content = '<strong>Không phát hiện mèo</strong><br><small>Đang tiếp tục tìm kiếm...</small>';
+            }
+            
+            $toast.removeClass('text-bg-success text-bg-warning text-bg-info').addClass(toastClass);
+            $toastBody.html(content);
+            
+            const toast = new bootstrap.Toast($toast[0], {
+                delay: 5000 
+            });
+            toast.show();
+        }
+        
+        function updateDetectionCameraStatus(data) {
+            if (data.cat_detected) {
+                if (data.diseases && data.diseases.length > 0) {
+                    updateCameraStatus({
+                        detection_info: {
+                            cat_detected: true,
+                            confidence: data.cat_confidence,
+                            disease_detected: true,
+                            disease_name: data.diseases[0].disease,
+                            disease_confidence: data.diseases[0].confidence
+                        }
+                    });
+                } else {
+                    updateCameraStatus({
+                        detection_info: {
+                            cat_detected: true,
+                            confidence: data.cat_confidence,
+                            disease_detected: false
+                        }
+                    });
+                }
+            } else {
+                updateCameraStatus({
+                    detection_info: {
+                        cat_detected: false,
+                        confidence: 0,
+                        disease_detected: false
+                    }
+                });
+            }
+        }
+        
+        function closeDiseaseResults() {
+            $('#diseaseResults').hide();
+        }
+        
+        // Event delegation cho nút close được tạo động
+        $(document).on('click', '#diseaseResults .btn-close', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeDiseaseResults();
+        });
+        
+        // Event delegation cho toast close
+        $(document).on('click', '#diseaseToast .btn-close', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const toast = bootstrap.Toast.getInstance(document.getElementById('diseaseToast'));
+            if (toast) {
+                toast.hide();
+            }
+        });
 
         function displayDiseaseResults(data) {
             const $resultsDiv = $('#diseaseResults');
@@ -377,13 +545,11 @@
                 url: "{% url 'app:get_status' %}",
                 method: 'GET',
                 success: function(data) {
-                    // Cập nhật device status (MQTT connection)
                     const $statusElement = $('#deviceStatus');
                     $statusElement.removeClass('status-online status-offline')
                                .addClass(`badge fs-6 ${data.device_status === 'online' ? 'status-online' : 'status-offline'}`)
                                .text(data.device_status === 'online' ? 'Online' : 'Offline');
                     
-                    // Cập nhật device connection status trong camera header
                     const $deviceConnectionStatus = $('#deviceConnectionStatus .badge');
                     $deviceConnectionStatus.removeClass('status-online status-offline')
                                           .addClass(data.device_status === 'online' ? 'status-online' : 'status-offline')
@@ -392,11 +558,9 @@
                     updateModeDisplay(data.current_mode);
                     $('#modeSwitch').prop('checked', data.current_mode === 'auto');
                     
-                    // Camera status sẽ được cập nhật riêng qua video stream events
                 },
                 error: function() {
                     console.log('Lỗi cập nhật trạng thái');
-                    // Chỉ báo lỗi API, không ảnh hưởng camera status
                     const $deviceConnectionStatus = $('#deviceConnectionStatus .badge');
                     $deviceConnectionStatus.removeClass('status-online status-offline')
                                           .addClass('status-offline')
@@ -430,13 +594,11 @@
                 $cameraStatus.addClass('disease-detected')
                             .html(`<i class="fas fa-virus me-1"></i>${disease.name} (${disease.confidence}%)`);
             } else {
-                // Mặc định khi không có thông tin detection
                 $cameraStatus.addClass('healthy')
                             .html(`<i class="fas fa-video me-1"></i>Camera sẵn sàng`);
             }
         }
         
-        // Riêng biệt function để cập nhật camera stream status
         function updateCameraStreamStatus(status) {
             const $cameraStatus = $('#cameraStatus');
             $cameraStatus.removeClass('error disease-detected healthy');
@@ -582,63 +744,167 @@
             toggleFabMenu();
         });
 
-        function setupVideoStream() {
-            const videoStream = document.getElementById('videoStream');
+        function setupVideoWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/video_stream/`;
+            
+            updateCameraStreamStatus('connecting');
+            
+            videoSocket = new WebSocket(wsUrl);
+            
+            videoSocket.onopen = function(e) {
+                videoSocket.send(JSON.stringify({command: 'start_stream'}));
+            };
+            
+            videoSocket.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                
+                if (data.type === 'video_frame') {
+                    displayVideoFrame(data.image);
+                } else if (data.type === 'error') {
+                    showVideoError(data.message);
+                } else if (data.type === 'status') {
+                    updateCameraStreamStatus('connecting');
+                } else if (data.type === 'detection_result') {
+                    displayDetectionResults(data);
+                } else if (data.type === 'detection_error') {
+                    console.error('Detection error:', data.message);
+                }
+            };
+            
+            videoSocket.onclose = function(e) {
+                updateCameraStreamStatus('error');
+                
+                if (document.getElementById('videoCanvas')) {
+                    setTimeout(function() {
+                        if (!videoSocket || videoSocket.readyState === WebSocket.CLOSED) {
+                            setupVideoWebSocket();
+                        }
+                    }, 3000);
+                }
+            };
+            
+            videoSocket.onerror = function(e) {
+                showVideoError('Lỗi kết nối WebSocket');
+            };
+        }
+        
+        function displayVideoFrame(imageBase64) {
+            const canvas = document.getElementById('videoCanvas');
+            const ctx = canvas.getContext('2d');
             const videoLoading = document.getElementById('videoLoading');
             const videoError = document.getElementById('videoError');
             
-            // Cập nhật camera status khi bắt đầu kết nối
-            updateCameraStreamStatus('connecting');
+            if (!imageBase64) {
+                return;
+            }
             
-            videoStream.onload = function() {
+            const img = new Image();
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                
                 videoLoading.style.display = 'none';
                 videoError.style.display = 'none';
-                videoStream.style.display = 'block';
+                canvas.style.display = 'block';
+                
                 updateCameraStreamStatus('connected');
-                console.log('Video stream loaded successfully');
             };
             
-            videoStream.onerror = function() {
-                videoLoading.style.display = 'none';
-                videoStream.style.display = 'none';
-                videoError.style.display = 'block';
-                updateCameraStreamStatus('error');
-                console.log('Video stream failed to load');
+            img.onerror = function() {
             };
             
-            // Timeout để phát hiện khi stream không load được
-            setTimeout(function() {
-                if (videoStream.style.display === 'none' && videoError.style.display === 'none') {
-                    videoLoading.style.display = 'none';
-                    videoError.style.display = 'block';
-                    updateCameraStreamStatus('error');
+            img.src = 'data:image/jpeg;base64,' + imageBase64;
+        }
+        
+        function showVideoError(message) {
+            const videoLoading = document.getElementById('videoLoading');
+            const videoError = document.getElementById('videoError');
+            const canvas = document.getElementById('videoCanvas');
+            
+            videoLoading.style.display = 'none';
+            canvas.style.display = 'none';
+            videoError.style.display = 'block';
+            
+            updateCameraStreamStatus('error');
+        }
+        
+        function setupStatusWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/system_status/`;
+            
+            statusSocket = new WebSocket(wsUrl);
+            
+            statusSocket.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                
+                if (data.type === 'status_update') {
+                    updateStatusFromWebSocket(data);
+                } else if (data.type === 'feed_log') {
+                    handleFeedLogUpdate(data.data);
+                } else if (data.type === 'device_status') {
+                    updateDeviceStatus(data.status);
                 }
-            }, 10000);
+            };
+            
+            statusSocket.onclose = function(e) {
+                setTimeout(setupStatusWebSocket, 5000);
+            };
+        }
+        
+        function updateStatusFromWebSocket(data) {
+            const $statusElement = $('#deviceStatus');
+            $statusElement.removeClass('status-online status-offline')
+                       .addClass(`badge fs-6 ${data.device_status === 'online' ? 'status-online' : 'status-offline'}`)
+                       .text(data.device_status === 'online' ? 'Online' : 'Offline');
+            
+            const $deviceConnectionStatus = $('#deviceConnectionStatus .badge');
+            $deviceConnectionStatus.removeClass('status-online status-offline')
+                                  .addClass(data.device_status === 'online' ? 'status-online' : 'status-offline')
+                                  .text(data.device_status === 'online' ? 'Online' : 'Offline');
+            
+            updateModeDisplay(data.current_mode);
+            $('#modeSwitch').prop('checked', data.current_mode === 'auto');
+            
+            const $statsCard = $('.stats-card').eq(3);
+            const $countElement = $statsCard.find('.fs-4.fw-bold');
+            $countElement.text(data.today_feeds);
+        }
+        
+        function handleFeedLogUpdate(feedData) {
+            showAlert('success', `Đã cho ăn thành công (${feedData.mode === 'auto' ? 'Tự động' : 'Thủ công'})`);
+            updateFeedingData();
+            
+            const $statsCard = $('.stats-card').eq(3);
+            $statsCard.addClass('stats-updated');
+            setTimeout(function() {
+                $statsCard.removeClass('stats-updated');
+            }, 600);
+        }
+        
+        function updateDeviceStatus(status) {
+            const $statusElement = $('#deviceStatus');
+            $statusElement.removeClass('status-online status-offline')
+                       .addClass(`badge fs-6 ${status === 'online' ? 'status-online' : 'status-offline'}`)
+                       .text(status === 'online' ? 'Online' : 'Offline');
+            
+            const $deviceConnectionStatus = $('#deviceConnectionStatus .badge');
+            $deviceConnectionStatus.removeClass('status-online status-offline')
+                                  .addClass(status === 'online' ? 'status-online' : 'status-offline')
+                                  .text(status === 'online' ? 'Online' : 'Offline');
         }
         
         window.retryVideoConnection = function() {
-            const videoStream = document.getElementById('videoStream');
-            const videoLoading = document.getElementById('videoLoading');
-            const videoError = document.getElementById('videoError');
-            
-            videoError.style.display = 'none';
-            videoLoading.style.display = 'block';
-            videoStream.style.display = 'none';
-            
-            // Cập nhật camera status khi retry
-            updateCameraStreamStatus('connecting');
-            
-            // Reload video stream với timestamp để tránh cache
-            const timestamp = new Date().getTime();
-            videoStream.src = "{% url 'app:video_feed' %}?t=" + timestamp;
+            if (videoSocket) {
+                videoSocket.close();
+            }
+            setupVideoWebSocket();
         };
         
-        // Setup video stream khi page load
-        setupVideoStream();
+        setupVideoWebSocket();
+        setupStatusWebSocket();
         
-        updateStatus();
-        
-        setInterval(updateStatus, 30000);
     });
     </script>
 {% endblock %}

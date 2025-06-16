@@ -18,6 +18,7 @@ class MQTTManager:
         self.is_connected = False
         self.last_connect_time = 0
         self.connect_attempts = 0
+        self.last_status_update = 0
         
         mqtt_settings = getattr(settings, 'MQTT_SETTINGS', {})
         self.topics = {
@@ -34,9 +35,18 @@ class MQTTManager:
             print("MQTT kết nối thành công")
             self.is_connected = True
             self.connect_attempts = 0 
+            
+            print(f"Available topics to subscribe: {self.topics}")
+            
             for topic_name, topic in self.topics.items():
                 result = client.subscribe(topic)
                 print(f"Subscribed to {topic_name}: {topic} - Result: {result}")
+                if result[0] != 0:
+                    print(f"CẢNH BÁO: Subscribe thất bại cho topic {topic} với code {result[0]}")
+                    
+            self.last_connect_time = time.time()
+            print(f"MQTT connection established at {self.last_connect_time}")
+            
         else:
             print(f"MQTT kết nối thất bại với code {rc}")
             self.is_connected = False
@@ -56,31 +66,85 @@ class MQTTManager:
     def on_message(self, client, userdata, msg):
         try:
             topic = msg.topic
-            payload = json.loads(msg.payload.decode())
+            raw_payload = msg.payload.decode()
+            print(f"Raw MQTT message received on topic '{topic}': {raw_payload}")
+            
+            try:
+                payload = json.loads(raw_payload)
+                print(f"Parsed JSON payload: {payload}")
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}, raw payload: {raw_payload}")
+                return
             
             if topic == self.topics['status']:
+                old_status = self.device_status
                 self.device_status = payload.get('status', 'offline')
-                print(f"Device status updated: {self.device_status}")
+                self.last_status_update = time.time()
+                print(f"Device status updated: {old_status} -> {self.device_status}")
+                print(f"Status update time: {self.last_status_update}")
+                print(f"Full status payload: {payload}")
+                
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        "system_status",
+                        {
+                            "type": "device_status_update",
+                            "status": self.device_status,
+                            "payload": payload
+                        }
+                    )
+                    print(f"Sent WebSocket update with status: {self.device_status}")
                 
             elif topic == self.topics['feed_log']:
+                print(f"Feed log received: {payload}")
                 self._handle_feed_log(payload)
+            else:
+                print(f"Unknown topic '{topic}' with payload: {payload}")
                 
         except Exception as e:
             print(f"Lỗi xử lý MQTT message: {e}")
+            import traceback
+            print(traceback.format_exc())
     
 
     def _handle_feed_log(self, payload):
         try:
             from .models import FeedingLog
             from django.contrib.auth.models import User
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
             
             user = User.objects.first()
             if user:
-                FeedingLog.objects.create(
-                    user=user,
-                    mode=payload.get('mode', 'manual'),
-                    device_id=payload.get('device', 'esp32_cam')
-                )
+                if payload.get('success', False):
+                    feed_log = FeedingLog.objects.create(
+                        user=user,
+                        mode=payload.get('mode', 'manual'),
+                        device_id=payload.get('device', 'esp32_cam')
+                    )
+                    
+                    print(f"Feed log saved: {feed_log.mode} at {feed_log.timestamp}")
+                    
+                    channel_layer = get_channel_layer()
+                    if channel_layer:
+                        async_to_sync(channel_layer.group_send)(
+                            "system_status",
+                            {
+                                "type": "feed_log_update",
+                                "data": {
+                                    "mode": feed_log.mode,
+                                    "timestamp": feed_log.timestamp.isoformat(),
+                                    "device_id": feed_log.device_id,
+                                    "daily_count": payload.get('daily_count', 0)
+                                }
+                            }
+                        )
+                else:
+                    print(f"Feed command failed on device: {payload}")
         except Exception as e:
             print(f"Lỗi lưu feed log: {e}")
     
@@ -88,21 +152,17 @@ class MQTTManager:
     
     def connect(self):
         try:
-            # Tạo client_id unique để tránh conflict
             import uuid
             client_id = f"Django_CatCare_{uuid.uuid4().hex[:8]}"
             self.client = mqtt.Client(client_id)
             
-            # Cấu hình keep alive và reconnect với backoff
             self.client.keepalive = 60
             self.client.reconnect_delay_set(min_delay=5, max_delay=300)
             
-            # Cấu hình will message để báo offline khi mất kết nối
             self.client.will_set(self.topics['status'], 
                                json.dumps({'status': 'offline', 'timestamp': time.time()}), 
                                qos=1, retain=True)
-            
-            # Set username/password nếu có
+        
             username = self.mqtt_settings.get('USERNAME', '')
             password = self.mqtt_settings.get('PASSWORD', '')
             if username and password:
@@ -137,12 +197,47 @@ class MQTTManager:
 
     
     def get_device_status(self):
+        current_time = time.time()
+        
+        if self.last_status_update == 0:
+            print("Chưa nhận được status update nào từ device")
+            return "offline"
+        
+        time_since_update = current_time - self.last_status_update
+        print(f"Time since last status update: {time_since_update:.1f} seconds")
+        
+        if time_since_update > 60:
+            print(f"Device timeout: {time_since_update:.1f}s > 60s, marking as offline")
+            self.device_status = "offline"
+        
+        print(f"Current device status: {self.device_status}")
         return self.device_status
     
     def is_device_connected(self):
-        return self.is_connected and self.device_status == "online"
+        mqtt_connected = self.is_connected
+        device_online = self.get_device_status() == "online"
+        
+        print(f"MQTT connected: {mqtt_connected}, Device online: {device_online}")
+        return mqtt_connected and device_online
     
 
+    
+    def debug_status(self):
+        """
+        Debug method để kiểm tra toàn bộ trạng thái MQTT
+        """
+        current_time = time.time()
+        print("=== MQTT DEBUG STATUS ===")
+        print(f"MQTT Client Connected: {self.is_connected}")
+        print(f"Device Status: {self.device_status}")
+        print(f"Last Connect Time: {self.last_connect_time}")
+        print(f"Last Status Update: {self.last_status_update}")
+        if self.last_status_update > 0:
+            print(f"Time Since Last Update: {current_time - self.last_status_update:.1f}s")
+        print(f"Connect Attempts: {self.connect_attempts}")
+        print(f"Subscribed Topics: {self.topics}")
+        print(f"MQTT Settings: {self.mqtt_settings}")
+        print("========================")
     
     def ensure_connection(self):
         """
@@ -153,6 +248,7 @@ class MQTTManager:
                 current_time = time.time()
                 if (current_time - self.last_connect_time) > 10:
                     print("Attempting MQTT reconnect...")
+                    self.debug_status()
                     self.client.reconnect()
                     self.last_connect_time = current_time
             except Exception as e:
@@ -177,3 +273,31 @@ def get_mqtt_manager():
     Lấy instance của MQTT manager
     """
     return mqtt_manager
+
+
+def test_mqtt():
+    """
+    Function để test MQTT connection và debug
+    """
+    print("Testing MQTT Connection...")
+    manager = get_mqtt_manager()
+    manager.debug_status()
+    
+    if manager.is_connected:
+        print("✅ MQTT Client connected")
+    else:
+        print("❌ MQTT Client not connected")
+        
+    status = manager.get_device_status()
+    print(f"Device Status: {status}")
+    
+    if manager.is_device_connected():
+        print("✅ Device is connected and online")
+    else:
+        print("❌ Device is offline or disconnected")
+        
+    print("\nCó thể test bằng cách gọi: python manage.py shell")
+    print(">>> from app.mqtt_client import test_mqtt")
+    print(">>> test_mqtt()")
+    
+    return manager

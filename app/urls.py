@@ -16,7 +16,5 @@ urlpatterns = [
     path('api/status/', views.get_status, name='get_status'),
     path('api/detect/', views.detect_disease, name='detect_disease'),
     path('api/feeding-data/', views.get_feeding_data, name='get_feeding_data'),
-    path('api/test-esp32/', views.test_esp32_stream, name='test_esp32_stream'),
-    
     path('video-feed/', views.video_feed, name='video_feed'),
 ]
