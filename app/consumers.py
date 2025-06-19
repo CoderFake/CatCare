@@ -12,6 +12,8 @@ import logging
 import warnings
 import threading
 import queue
+import subprocess
+import signal
 from concurrent.futures import ThreadPoolExecutor
 from .disease_detector import get_cat_care_detector
 
@@ -76,53 +78,72 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                 pass
     
     def capture_frames_thread(self, rtsp_url):
-        """Thread riêng để capture frames từ RTSP - không block Django"""
         cap = None
         retry_count = 0
         max_retries = 5
         
         print(f"Bắt đầu kết nối RTSP: {rtsp_url}")
+        time.sleep(2)
         
         while VideoStreamConsumer._shared_streaming:
             try:
                 cap = None
+                
                 backends = [
                     (cv2.CAP_FFMPEG, "CAP_FFMPEG"),
-                    (cv2.CAP_ANY, "CAP_ANY (default)"),
+                    (cv2.CAP_AVFOUNDATION, "CAP_AVFOUNDATION"),
+                    (cv2.CAP_ANY, "CAP_ANY"),
                     (cv2.CAP_GSTREAMER, "CAP_GSTREAMER"),
                 ]
                 
                 for backend_id, backend_name in backends:
                     try:
                         print(f"Thử kết nối với backend: {backend_name}")
+                        print(f"RTSP URL: {rtsp_url}")
+                        
+                        time.sleep(1)
+                        
                         cap = cv2.VideoCapture(rtsp_url, backend_id)
                         
-                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                        cap.set(cv2.CAP_PROP_FPS, 15) 
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
-                        
                         if cap.isOpened():
-                            print(f"Kết nối thành công với {backend_name}")
-                            break
+                            print(f"VideoCapture opened với {backend_name}")
+                            
+                            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
+                            cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            cap.set(cv2.CAP_PROP_FPS, 15) 
+                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                           
+                            test_ret, test_frame = cap.read()
+                            if test_ret and test_frame is not None:
+                                print(f"Kết nối và đọc frame thành công với {backend_name}")
+                                break
+                            else:
+                                print(f"Không thể đọc frame với {backend_name}")
+                                cap.release()
+                                cap = None
                         else:
                             print(f"Không thể mở stream với {backend_name}")
-                            cap.release()
+                            if cap:
+                                cap.release()
                             cap = None
                     except Exception as e:
                         print(f"Lỗi khi thử {backend_name}: {e}")
                         if cap:
                             cap.release()
                         cap = None
+                        time.sleep(0.5)
                 
                 if not cap:
                     print("Không thể mở RTSP stream với bất kỳ backend nào")
-                    raise Exception("Cannot open RTSP stream")
+                    
+                    if not cap:
+                        raise Exception("Cannot open RTSP stream and HTTP fallback failed")
                 
                 print("Đang test đọc frame...")
                 test_success = False
-                for test_attempt in range(5):  # Tăng số lần thử
+                for test_attempt in range(5):
                     print(f"Thử đọc frame lần {test_attempt + 1}/5...")
                     ret, test_frame = cap.read()
                     if ret and test_frame is not None:
@@ -131,7 +152,7 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                         break
                     else:
                         print(f"Thất bại lần {test_attempt + 1}, đợi 1s...")
-                        time.sleep(1.0)  # Tăng thời gian chờ
+                        time.sleep(1.0) 
                 
                 if not test_success:
                     print("Không thể đọc frame nào từ RTSP sau 5 lần thử")
@@ -224,7 +245,7 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                     await asyncio.sleep(0.1)
                     continue
                 
-                camera_settings = getattr(settings, 'CAMERA_SETTINGS', {})
+                camera_settings = settings.CAMERA_SETTINGS
                 flip_horizontal = camera_settings.get('FLIP_HORIZONTAL', False)
                 flip_vertical = camera_settings.get('FLIP_VERTICAL', False)
                 rotate_180 = camera_settings.get('ROTATE_180', False)
@@ -468,12 +489,10 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                     'detection_count': len(disease_data)
                 })
         
-        # Sắp xếp theo confidence giảm dần
         final_diseases.sort(key=lambda x: x['confidence'], reverse=True)
         
-        # Tính cat detection và cropping
-        cat_detected = cat_detected_count >= (total_frames * 0.5)  # Mèo xuất hiện ít nhất 50% frames
-        cat_cropped = cat_cropped_count >= (total_frames * 0.3)   # Crop thành công ít nhất 30% frames
+        cat_detected = cat_detected_count >= (total_frames * 0.5) 
+        cat_cropped = cat_cropped_count >= (total_frames * 0.3)  
         
         # Tạo message
         if cat_detected and cat_cropped:
@@ -557,7 +576,6 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
             
             elif command == 'detect_once':
                 if self.disease_detection_enabled:
-                    # Phân tích video trong 5 giây để có kết quả chính xác hơn
                     loop = asyncio.get_event_loop()
                     detection_result = await loop.run_in_executor(
                         self.executor, 

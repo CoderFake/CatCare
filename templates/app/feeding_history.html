@@ -214,7 +214,6 @@
 {% block extra_js %}
 <script>
     $(document).ready(function() {
-        // Set default dates if not provided
         const today = new Date();
         const oneWeekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
         
@@ -234,21 +233,18 @@
             $('#filterForm').submit();
         });
         
-        // Auto submit on date change
         $('#start_date, #end_date, #mode_filter').on('change', function() {
-            // Validate date range
             const startDate = new Date($('#start_date').val());
             const endDate = new Date($('#end_date').val());
             
             if (startDate > endDate) {
-                alert('Ngày bắt đầu không thể lớn hơn ngày kết thúc!');
+                showMessage('error', 'Ngày bắt đầu không thể lớn hơn ngày kết thúc!');
                 return;
             }
             
             $('#filterForm').submit();
         });
         
-        // Export to Excel functionality
         $('#exportBtn').on('click', function() {
             const params = new URLSearchParams(window.location.search);
             params.set('export', 'excel');
@@ -274,7 +270,6 @@
         
         addQuickFilters();
         
-        // Quick filter handlers
         $(document).on('click', '.quick-filter', function() {
             const days = parseInt($(this).data('days'));
             const endDate = new Date();
@@ -285,7 +280,6 @@
             $('#filterForm').submit();
         });
         
-        // Highlight active quick filter
         function highlightActiveFilter() {
             const startDate = new Date($('#start_date').val());
             const endDate = new Date($('#end_date').val());

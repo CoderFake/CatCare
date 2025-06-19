@@ -2,6 +2,35 @@
 
 {% block title %}CatCare Dashboard{% endblock %}
 
+{% block extra_css %}
+<style>
+    .disease-alert {
+        background: linear-gradient(135deg, #fff9c4, #fef3c7);
+        border: 1px solid #fcd34d;
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        animation: slideInUp 0.3s ease-out;
+    }
+    
+    @keyframes slideInUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    #diseaseResults .alert {
+        margin-bottom: 0;
+        animation: slideInUp 0.3s ease-out;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
     <div class="container mt-4">
         <!-- Status Cards -->
@@ -213,13 +242,13 @@
 <div class="floating-controls d-md-none">
     <div class="mobile-fab-menu">
         <div class="fab-options" id="fabOptions">
-            <button class="control-btn control-mode" data-action="toggle-mode-quick" data-close-fab="true" title="Đổi chế độ">
+            <button class="control-btn control-mode" data-action="toggle-mode-quick" data-close-fab="true">
             <i class="fas fa-sync-alt"></i>
             </button>
-            <button class="control-btn control-detect" data-action="detect-disease" data-close-fab="true" title="Phát hiện bệnh">
+            <button class="control-btn control-detect" data-action="detect-disease" data-close-fab="true">
                 <i class="fas fa-search"></i>
             </button>
-            <button class="control-btn control-feed" data-action="manual-feed" data-close-fab="true" title="Cho ăn">
+            <button class="control-btn control-feed" data-action="manual-feed" data-close-fab="true">
                 <i class="fas fa-utensils"></i>
             </button>
         </div>
@@ -232,6 +261,7 @@
 
 {% block extra_js %}
     <script>
+    
     $(document).ready(function() {
         $('body').append('<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">');
         
@@ -295,37 +325,27 @@
 
         let detectionActive = false;
 
-        function detectDisease() {
-            if (!detectionActive) {
-                detectionActive = true;
+                  function detectDisease() {
+              if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
+                  if (!detectionActive) {
+                      videoSocket.send(JSON.stringify({command: 'start_detection'}));
+                      detectionActive = true;
+                  }
+                  
+                  videoSocket.send(JSON.stringify({command: 'detect_once'}));
+                  
+                  const $button = $('[data-action="detect-disease"]');
+                  const originalHtml = $button.html();
+                  $button.html('<i class="fas fa-spinner fa-spin"></i>');
+                  $button.prop('disabled', true);
+                  
+                  setTimeout(() => {
+                      $button.html('<i class="fas fa-search"></i>');
+                      $button.prop('disabled', false);
+                  }, 10000);
                 
-                if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
-                    videoSocket.send(JSON.stringify({command: 'start_detection'}));
-                    showAlert('info', 'Bắt đầu phát hiện bệnh...');
-                    
-                    $('[data-action="detect-disease"]').html('<i class="fas fa-stop me-1"></i>');
-                } else {
-                    showAlert('danger', 'Chưa kết nối video stream');
-                }
             } else {
-                detectionActive = false;
-                
-                if (videoSocket && videoSocket.readyState === WebSocket.OPEN) {
-                    videoSocket.send(JSON.stringify({command: 'stop_detection'}));
-                    showAlert('info', 'Đã dừng phát hiện bệnh');
-                }
-                
-                // Reset nút detect về trạng thái ban đầu
-                $('[data-action="detect-disease"]').html('<i class="fas fa-search"></i>');
-                
-                // Ẩn kết quả detection
-                $('#diseaseResults').hide();
-                
-                // Ẩn toast nếu có
-                const toast = bootstrap.Toast.getInstance(document.getElementById('diseaseToast'));
-                if (toast) {
-                    toast.hide();
-                }
+                showAlert('danger', 'Chưa kết nối video stream');
             }
         }
         
@@ -341,6 +361,49 @@
             updateDetectionCameraStatus(data);
         }
         
+        function displayDiseaseResults(data) {
+            console.log('💊 Hiển thị kết quả phát hiện bệnh:', data);
+            
+            const $resultsDiv = $('#diseaseResults');
+            let html = '';
+            
+            if (data.cat_detected) {
+                if (data.diseases && data.diseases.length > 0) {
+                    html = `<div class="alert alert-warning alert-dismissible fade show">
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo - Có ${data.diseases.length} bệnh được phát hiện:</h6>`;
+                    
+                    data.diseases.forEach((disease, index) => {
+                        const diseaseName = disease.disease_vn || disease.disease || 'Bệnh không xác định' || disease.disease_vn || disease.disease || 'Bệnh không xác định' || disease.name || 'Bệnh không xác định';
+                        const confidence = Math.round(Math.round(disease.confidence || 0) || 0);
+                        html += `<div class="disease-alert mt-2">
+                            <strong>${diseaseName}</strong> - Độ tin cậy: ${confidence}%
+                            ${disease.disease_vn || disease.disease || 'Bệnh không xác định' ? `<small class="text-muted d-block">(${disease.disease_vn || disease.disease || 'Bệnh không xác định'})</small>` : ''}
+                        </div>`;
+                    });
+                    
+                    html += `<button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button></div>`;
+                } else {
+                    html = `<div class="alert alert-success alert-dismissible fade show">
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh</h6>
+                        <small class="text-muted">Không phát hiện bệnh nào</small>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                    </div>`;
+                }
+            } else {
+                html = `<div class="alert alert-info alert-dismissible fade show">
+                    <i class="fas fa-search me-2"></i>Không phát hiện mèo trong video
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                </div>`;
+            }
+            
+            $resultsDiv.html(html);
+            $resultsDiv.show();
+        }
+        
+        function closeDiseaseResults() {
+            $('#diseaseResults').hide();
+        }
+        
         function showDiseaseAlert(data) {
             const $resultsDiv = $('#diseaseResults');
             
@@ -348,15 +411,20 @@
             let alertType = 'info';
             
             if (data.cat_detected) {
+                const cropStatus = data.cat_cropped ? 
+                    '<small class="text-success"><i class="fas fa-check me-1"></i>Crop mèo thành công</small>' : 
+                    '<small class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Không thể crop mèo</small>';
+                
                 if (data.diseases.length > 0) {
                     alertType = 'warning';
                     html = `<div class="alert alert-${alertType} alert-dismissible fade show">
-                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo (${data.cat_confidence}%) - Có ${data.total_detections} bệnh được phát hiện:</h6>`;
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo - Có ${data.total_diseases} bệnh được phát hiện:</h6>
+                        <div class="mb-2">${cropStatus}</div>`;
                     
                     data.diseases.forEach((disease, index) => {
                         html += `<div class="disease-alert mt-2">
-                            <strong>${disease.disease}</strong> - Độ tin cậy: ${disease.confidence}%
-                            <small class="text-muted d-block">(${disease.english_name})</small>
+                            <strong>${disease.disease_vn || disease.disease || 'Bệnh không xác định'}</strong> - Độ tin cậy: ${Math.round(disease.confidence || 0)}%
+                            <small class="text-muted d-block">(${disease.disease_en || disease.english_name || 'Unknown'})</small>
                         </div>`;
                     });
                     
@@ -364,7 +432,9 @@
                 } else {
                     alertType = 'success';
                     html = `<div class="alert alert-${alertType} alert-dismissible fade show">
-                        <i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh (${data.cat_confidence}%)
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh</h6>
+                        <div class="mb-2">${cropStatus}</div>
+                        <small class="text-muted">${data.message || 'Không phát hiện bệnh'}</small>
                         <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
                     </div>`;
                 }
@@ -388,17 +458,19 @@
             let toastClass = 'text-bg-info';
             
             if (data.cat_detected) {
-                if (data.diseases.length > 0) {
+                const cropInfo = data.cat_cropped ? 'Crop thành công' : 'Không thể crop';
+                
+                if (data.diseases && data.diseases.length > 0) {
                     toastClass = 'text-bg-warning';
-                    content = `<strong>Phát hiện mèo (${data.cat_confidence}%)</strong><br>`;
-                    content += `<small>Có ${data.total_detections} bệnh được phát hiện:</small><br>`;
+                    content = `<strong>Phát hiện mèo → ${cropInfo}</strong><br>`;
+                    content += `<small>Có ${data.total_diseases} bệnh được phát hiện:</small><br>`;
                     
                     data.diseases.forEach((disease, index) => {
-                        content += `<small>• ${disease.disease} (${disease.confidence}%)</small><br>`;
+                        content += `<small>• ${disease.disease_vn || disease.disease || 'Bệnh không xác định'} (${Math.round(disease.confidence || 0)}%)</small><br>`;
                     });
                 } else {
                     toastClass = 'text-bg-success';
-                    content = `<strong>Phát hiện mèo khỏe mạnh</strong><br><small>Độ tin cậy: ${data.cat_confidence}%</small>`;
+                    content = `<strong>Phát hiện mèo khỏe mạnh</strong><br><small>${cropInfo} → Không có bệnh</small>`;
                 }
             } else {
                 toastClass = 'text-bg-info';
@@ -420,7 +492,7 @@
                     updateCameraStatus({
                         detection_info: {
                             cat_detected: true,
-                            confidence: data.cat_confidence,
+                            confidence: data.cat_confidence || 0,
                             disease_detected: true,
                             disease_name: data.diseases[0].disease,
                             disease_confidence: data.diseases[0].confidence
@@ -430,7 +502,7 @@
                     updateCameraStatus({
                         detection_info: {
                             cat_detected: true,
-                            confidence: data.cat_confidence,
+                            confidence: data.cat_confidence || 0,
                             disease_detected: false
                         }
                     });
@@ -450,14 +522,83 @@
             $('#diseaseResults').hide();
         }
         
-        // Event delegation cho nút close được tạo động
+        function showDiseaseToast(data) {
+            let toastHtml = '';
+            let toastClass = '';
+            
+            if (data.cat_detected) {
+                if (data.diseases && data.diseases.length > 0) {
+                    toastClass = 'bg-warning';
+                    toastHtml = `
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-cat me-2"></i>
+                            <div class="flex-grow-1">
+                                <strong>Phát hiện ${data.total_diseases} bệnh</strong>
+                                <div class="small mt-1">
+                                    ${data.diseases.map(d => d.disease || d.name || 'Bệnh không xác định').join(', ')}
+                                </div>
+                                ${data.frames_analyzed ? `<div class="small text-muted">Phân tích ${data.frames_analyzed} frames</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    toastClass = 'bg-success';
+                    toastHtml = `
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-cat me-2"></i>
+                            <div class="flex-grow-1">
+                                <strong>Mèo khỏe mạnh</strong>
+                                <div class="small">Không phát hiện bệnh</div>
+                                ${data.frames_analyzed ? `<div class="small text-muted">Phân tích ${data.frames_analyzed} frames</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }
+            } else {
+                toastClass = 'bg-info';
+                toastHtml = `
+                    <div class="d-flex align-items-center">
+                        <i class="fas fa-search me-2"></i>
+                        <div class="flex-grow-1">
+                            <strong>Không phát hiện mèo</strong>
+                            <div class="small">${data.message || 'Không có mèo trong khung hình'}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Tạo toast element
+            const toastId = 'diseaseToast' + Date.now();
+            const toast = $(`
+                <div class="toast ${toastClass} text-white" id="${toastId}" role="alert" style="position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px;">
+                    <div class="toast-body">
+                        ${toastHtml}
+                        <button type="button" class="btn-close btn-close-white float-end" data-bs-dismiss="toast"></button>
+                    </div>
+                </div>
+            `);
+            
+            $('body').append(toast);
+            
+            // Show toast
+            const bsToast = new bootstrap.Toast(toast[0], {
+                autohide: true,
+                delay: 8000
+            });
+            bsToast.show();
+            
+            // Remove từ DOM sau khi ẩn
+            toast[0].addEventListener('hidden.bs.toast', function() {
+                toast.remove();
+            });
+        }
+        
         $(document).on('click', '#diseaseResults .btn-close', function(e) {
             e.preventDefault();
             e.stopPropagation();
             closeDiseaseResults();
         });
         
-        // Event delegation cho toast close
         $(document).on('click', '#diseaseToast .btn-close', function(e) {
             e.preventDefault();
             e.stopPropagation();
@@ -468,70 +609,96 @@
         });
 
         function displayDiseaseResults(data) {
+            console.log('🚀 displayDiseaseResults called with:', data);
             const $resultsDiv = $('#diseaseResults');
+            console.log('📍 resultsDiv element:', $resultsDiv.length > 0 ? 'FOUND' : 'NOT FOUND');
             
-            if (data.success) {
-                let html = '';
+            let html = '';
+            
+            if (data.cat_detected) {
+                const cropStatus = data.cat_cropped ? 
+                    '<small class="text-success"><i class="fas fa-check me-1"></i>Crop mèo thành công</small>' : 
+                    '<small class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Không thể crop mèo</small>';
                 
-                if (data.cat_detected) {
-                if (data.diseases.length > 0) {
-                        html = `<div class="alert alert-custom alert-warning">
-                            <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo (${data.cat_confidence}%) - Có ${data.total_detections} bệnh được phát hiện:</h6>`;
+                const analysisInfo = data.frames_analyzed ? 
+                    `<small class="text-info d-block"><i class="fas fa-chart-line me-1"></i>Đã phân tích ${data.frames_analyzed} frames trong 5 giây</small>` : '';
+                
+                if (data.diseases && data.diseases.length > 0) {
+                    const catConfidence = data.cat_confidence ? `(${Math.round(data.cat_confidence * 100)}%)` : '';
+                    html = `<div class="alert alert-warning alert-dismissible fade show">
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo ${catConfidence} - Có ${data.total_diseases} bệnh được phát hiện:</h6>
+                        <div class="mb-2">${cropStatus}</div>
+                        <div class="mb-2">${analysisInfo}</div>`;
                     
-                        data.diseases.forEach((disease, index) => {
-                        html += `<div class="disease-alert mt-3">
-                                <strong>${disease.disease}</strong> - Độ tin cậy: ${disease.confidence}%
-                                <small class="text-muted d-block">(${disease.english_name})</small>
+                    data.diseases.forEach((disease, index) => {
+                        const detectionStats = disease.detection_count ? 
+                            `<small class="text-muted d-block">Xuất hiện trong ${disease.detection_count}/${data.frames_analyzed} frames (${Math.round((disease.appearance_rate || 0) * 100)}%)</small>` : '';
+                        
+                        html += `<div class="disease-alert mt-2">
+                            <strong>${disease.disease_vn || disease.disease || 'Bệnh không xác định'}</strong> - Độ tin cậy: ${Math.round(disease.confidence || 0)}%
+                            <small class="text-muted d-block">(${disease.disease_en || disease.english_name || 'Unknown'})</small>
+                            ${detectionStats}
                         </div>`;
                     });
                     
-                    html += '</div>';
-                        
-                        const topDisease = data.diseases[0];
-                        updateCameraStatus({
-                            device_status: 'online',
-                            detection_info: {
-                                cat_detected: true,
-                                confidence: data.cat_confidence,
-                                disease_detected: true,
-                                disease_name: topDisease.disease,
-                                disease_confidence: topDisease.confidence
-                            }
-                        });
-                    } else {
-                        html = `<div class="alert alert-custom alert-success">
-                            <i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh (${data.cat_confidence}%)
-                        </div>`;
-                        
-                        updateCameraStatus({
-                            device_status: 'online',
-                            detection_info: {
-                                cat_detected: true,
-                                confidence: data.cat_confidence,
-                                disease_detected: false
-                            }
-                        });
-                    }
+                    html += `<button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button></div>`;
+                    
+                    const topDisease = data.diseases[0];
+                    updateCameraStatus({
+                        detection_info: {
+                            cat_detected: true,
+                            confidence: data.cat_confidence || 0, 
+                            disease_detected: true,
+                            disease_name: topDisease.disease,
+                            disease_confidence: topDisease.confidence
+                        }
+                    });
                 } else {
-                    html = '<div class="alert alert-custom alert-info"><i class="fas fa-search me-2"></i>Không phát hiện mèo trong hình ảnh</div>';
+                    const catConfidence = data.cat_confidence ? `(${Math.round(data.cat_confidence * 100)}%)` : '';
+                    html = `<div class="alert alert-success alert-dismissible fade show">
+                        <h6><i class="fas fa-cat me-2"></i>Phát hiện mèo khỏe mạnh ${catConfidence}</h6>
+                        <div class="mb-2">${cropStatus}</div>
+                        <div class="mb-2">${analysisInfo}</div>
+                        <small class="text-muted">${data.message || 'Không phát hiện bệnh'}</small>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                    </div>`;
                     
                     updateCameraStatus({
-                        device_status: 'online',
                         detection_info: {
-                            cat_detected: false,
-                            confidence: 0,
+                            cat_detected: true,
+                            confidence: data.cat_confidence || 0,
                             disease_detected: false
                         }
                     });
                 }
-                
-                $resultsDiv.html(html);
             } else {
-                $resultsDiv.html(`<div class="alert alert-custom alert-danger"><i class="fas fa-times-circle me-2"></i>${data.message}</div>`);
+                html = `<div class="alert alert-info alert-dismissible fade show">
+                    <i class="fas fa-search me-2"></i>${data.message || 'Không phát hiện mèo trong khung hình'}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" onclick="closeDiseaseResults()"></button>
+                </div>`;
+                
+                updateCameraStatus({
+                    detection_info: {
+                        cat_detected: false,
+                        confidence: 0,
+                        disease_detected: false
+                    }
+                });
             }
             
+            $resultsDiv.html(html);
             $resultsDiv.show();
-            $resultsDiv[0].scrollIntoView({behavior: 'smooth'});
+            
+            if ($resultsDiv[0]) {
+                $resultsDiv[0].scrollIntoView({behavior: 'smooth', block: 'nearest'});
+            }
+            
+            if (!data.diseases || data.diseases.length === 0) {
+                setTimeout(() => {
+                    $resultsDiv.fadeOut();
+                }, 8000);
+            }
+            
         }
 
         function updateModeDisplay(mode) {
@@ -592,7 +759,7 @@
             } else if (data.disease_info && data.disease_info.detected) {
                 const disease = data.disease_info;
                 $cameraStatus.addClass('disease-detected')
-                            .html(`<i class="fas fa-virus me-1"></i>${disease.name} (${disease.confidence}%)`);
+                            .html(`<i class="fas fa-virus me-1"></i>${disease.name} (${Math.round(disease.confidence || 0)}%)`);
             } else {
                 $cameraStatus.addClass('healthy')
                             .html(`<i class="fas fa-video me-1"></i>Camera sẵn sàng`);
@@ -703,7 +870,6 @@
             }, 5000);
         }
 
-        // FAB Menu Controls
         function toggleFabMenu() {
             $('#fabMain, #fabOptions').toggleClass('active');
         }
@@ -758,6 +924,11 @@
             
             videoSocket.onmessage = function(e) {
                 const data = JSON.parse(e.data);
+                console.log('WebSocket message received:', data); 
+                
+                if (data.type === 'disease_detection_result') {
+                    console.log('DISEASE DETECTION RESULT RECEIVED:', data);
+                }
                 
                 if (data.type === 'video_frame') {
                     displayVideoFrame(data.image);
@@ -765,10 +936,27 @@
                     showVideoError(data.message);
                 } else if (data.type === 'status') {
                     updateCameraStreamStatus('connecting');
+                    console.log('Status message:', data.message);
                 } else if (data.type === 'detection_result') {
                     displayDetectionResults(data);
+                } else if (data.type === 'disease_detection_result') {
+                    console.log('Disease detection result received:', data);
+                    
+                    const $button = $('[data-action="detect-disease"]');
+                    $button.html('<i class="fas fa-search"></i>');
+                    $button.prop('disabled', false);
+                    
+                    // Hiển thị kết quả khác nhau cho mobile và desktop
+                    const isMobile = window.innerWidth < 992;
+                    if (isMobile) {
+                        showDiseaseToast(data);
+                    } else {
+                        displayDiseaseResults(data);
+                    }
                 } else if (data.type === 'detection_error') {
                     console.error('Detection error:', data.message);
+                } else {
+                    console.log('Unknown message type:', data.type);
                 }
             };
             
@@ -845,6 +1033,8 @@
                     handleFeedLogUpdate(data.data);
                 } else if (data.type === 'device_status') {
                     updateDeviceStatus(data.status);
+                } else if (data.type === 'camera_status') {
+                    handleCameraStatusUpdate(data.data);
                 }
             };
             
@@ -895,6 +1085,25 @@
                                   .text(status === 'online' ? 'Online' : 'Offline');
         }
         
+        function handleCameraStatusUpdate(cameraInfo) {
+            console.log('Camera status update received:', cameraInfo);
+            
+            if (cameraInfo && cameraInfo.rtsp_url) {
+                console.log('RTSP URL updated:', cameraInfo.rtsp_url);
+            }
+            
+            if (cameraInfo && cameraInfo.status) {
+                const cameraStatus = cameraInfo.status;
+                console.log('Camera status:', cameraStatus);
+                
+                if (cameraStatus === 'streaming') {
+                    updateCameraStreamStatus('connected');
+                } else if (cameraStatus === 'error') {
+                    updateCameraStreamStatus('error');
+                }
+            }
+        }
+        
         window.retryVideoConnection = function() {
             if (videoSocket) {
                 videoSocket.close();
@@ -902,6 +1111,8 @@
             setupVideoWebSocket();
         };
         
+        console.log('🔍 Checking diseaseResults element:', $('#diseaseResults').length);
+
         setupVideoWebSocket();
         setupStatusWebSocket();
         

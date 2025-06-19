@@ -138,25 +138,20 @@
             `);
             
             $container.append($newSchedule);
-            // Focus vào input mới
             $newSchedule.find('input').focus();
         }
         
-        // Xóa lịch cho ăn
         function removeSchedule($button) {
             const $scheduleItem = $button.closest('.time-input-group');
             const $container = $('#scheduleContainer');
             
-            // Không cho xóa nếu chỉ còn 1 item
             if ($container.children().length > 1) {
                 $scheduleItem.remove();
             } else {
-                // Reset giá trị thay vì xóa
                 $scheduleItem.find('input').val('');
             }
         }
         
-        // Validate schedule times
         function validateSchedules() {
             const $timeInputs = $('input[name="schedule_time"]');
             const times = [];
@@ -165,7 +160,7 @@
                 const value = $timeInputs.eq(i).val();
                 if (value) {
                     if (times.includes(value)) {
-                        alert('Không được đặt trùng giờ cho ăn!');
+                        showMessage('error', 'Không được đặt trùng giờ cho ăn!');
                         $timeInputs.eq(i).focus();
                         return false;
                     }

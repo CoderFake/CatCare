@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
 #include "esp_timer.h"
 #include "img_converters.h"
 #include "Arduino.h"
@@ -30,58 +29,30 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-#define SERVO_PIN         2
-#define GREEN_LED_PIN     12
-#define RED_LED_PIN       15
-#define BUZZER_PIN        14
-#define SWITCH_PIN        4
-
 #include "wifikeys.h"
 
 const char* mqtt_server = "broker.emqx.io";
 const int mqtt_port = 1883;
-
-const char* topic_feed = "catcare/feed";
-const char* topic_mode = "catcare/mode";
-const char* topic_status = "catcare/status";
-const char* topic_feed_log = "catcare/feed_log";
+const char* topic_camera_status = "catcare/camera_status";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-Servo feedingServo;
-
 RTSPServer rtspServer;
 
-String operatingMode = "manual";
-unsigned long lastHeartbeat = 0;
-unsigned long lastSwitchCheck = 0;
-bool lastSwitchState = false;
-int dailyFeedCount = 0;
-unsigned long lastFeedTime = 0;
 int quality = 15;
-
+unsigned long lastHeartbeat = 0;
 const unsigned long HEARTBEAT_INTERVAL = 30000;
-const unsigned long SWITCH_DEBOUNCE = 200;
-const unsigned long MIN_FEED_INTERVAL = 60000;
-const int MAX_DAILY_FEEDS = 10;
 
-TaskHandle_t mqttTaskHandler;
 TaskHandle_t videoTaskHandle = NULL;
+TaskHandle_t mqttTaskHandle = NULL;
 
-void setupHardware();
 bool setupCamera();
 void connectWiFi();
 void setupMQTT();
 void mqttTask(void *pvParameters);
-void sendVideo(void* pvParameters);
 void reconnectMQTT();
-void onMqttMessage(char* topic, byte* payload, unsigned int length);
-void activateFeeding(String mode);
-void handleManualSwitch();
-void sendHeartbeat();
-void publishStatus(String status);
-void publishFeedingLog(String mode);
-void signalStartup();
+void publishCameraStatus();
+void sendVideo(void* pvParameters);
 void setupRTSP();
 void getFrameQuality();
 
@@ -90,30 +61,28 @@ void setup() {
     
     Serial.begin(115200);
     Serial.setDebugOutput(false);
-    Serial.println("=== CatCare ESP32-CAM với ESP32-RTSPServer Starting ===");
-    
-    setupHardware();
+    Serial.println("=== CatCare ESP32-CAM RTSP Server Starting ===");
     
     if (setupCamera()) {
         Serial.println("[SETUP] Camera initialized successfully");
         getFrameQuality();
     } else {
-        Serial.println("[SETUP] ❌ Camera initialization failed!");
+        Serial.println("[SETUP] Camera initialization failed!");
         return;
     }
     
     connectWiFi();
     setupMQTT();
     setupRTSP();
-
+    
     Serial.println("[SETUP] Creating MQTT task...");
     xTaskCreatePinnedToCore(
         mqttTask,
         "MQTT Task",
-        8192,
+        4096,
         NULL,
         1,
-        &mqttTaskHandler,
+        &mqttTaskHandle,
         0
     );
     
@@ -128,8 +97,6 @@ void setup() {
         0
     );
     
-    signalStartup();
-    
     Serial.println("[SETUP] Waiting for MQTT connection...");
     int retries = 0;
     while (!client.connected() && retries < 10) {
@@ -139,43 +106,26 @@ void setup() {
     }
     
     if (client.connected()) {
-        Serial.println("[SETUP] ✅ MQTT connected! Publishing initial status...");
-        publishStatus("online");
+        Serial.println("[SETUP] MQTT connected! Publishing camera status...");
+        publishCameraStatus();
         delay(1000);
-        Serial.println("[SETUP] Initial status sent");
-    } else {
-        Serial.println("[SETUP] ❌ MQTT connection failed after retries");
     }
     
-    Serial.println("=== CatCare ESP32-CAM Ready ===");
+    Serial.println("=== CatCare ESP32-CAM RTSP Server Ready ===");
     Serial.printf("RTSP Stream: rtsp://%s:8554/\n", WiFi.localIP().toString().c_str());
-    Serial.println("Debug logs enabled for MQTT troubleshooting");
 }
 
 void loop() {
-    handleManualSwitch();
-    
     static unsigned long lastMemCheck = 0;
-    static unsigned long lastMqttCheck = 0;
     
     if (millis() - lastMemCheck > 5000) {
         Serial.printf("[STATUS] Heap: %d bytes, FPS: %lu\n", ESP.getFreeHeap(), rtspServer.rtpFps);
-        lastMemCheck = millis();
-    }
-    
-    if (millis() - lastMqttCheck > 15000) {
-        Serial.printf("[STATUS] MQTT Connected: %s, WiFi: %s (Status: %d), IP: %s\n",
-                      client.connected() ? "YES" : "NO",
+        Serial.printf("[STATUS] WiFi: %s (Status: %d), IP: %s\n",
                       WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected",
                       WiFi.status(),
                       WiFi.localIP().toString().c_str());
-        
-        if (client.connected()) {
-            Serial.printf("[STATUS] Next heartbeat in: %lu ms\n", 
-                          HEARTBEAT_INTERVAL - (millis() - lastHeartbeat));
-        }
-        
-        lastMqttCheck = millis();
+        Serial.printf("[STATUS] MQTT Connected: %s\n", client.connected() ? "YES" : "NO");
+        lastMemCheck = millis();
     }
     
     yield();
@@ -201,21 +151,7 @@ void sendVideo(void* pvParameters) {
     }
 }
 
-void setupHardware() {
-    pinMode(GREEN_LED_PIN, OUTPUT);
-    pinMode(RED_LED_PIN, OUTPUT);
-    pinMode(BUZZER_PIN, OUTPUT);
-    pinMode(SWITCH_PIN, INPUT_PULLUP);
-    
-    digitalWrite(GREEN_LED_PIN, LOW); 
-    digitalWrite(RED_LED_PIN, HIGH); 
-    digitalWrite(BUZZER_PIN, LOW);
-    
-    feedingServo.attach(SERVO_PIN);
-    feedingServo.write(0);
-    
-    Serial.println("Hardware initialized");
-}
+
 
 bool setupCamera() {
     esp_camera_deinit();
@@ -309,20 +245,20 @@ void connectWiFi() {
     
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("");
-        Serial.println("[WiFi] ✅ WiFi connected successfully!");
+        Serial.println("[WiFi] WiFi connected successfully!");
         Serial.printf("[WiFi] IP address: %s\n", WiFi.localIP().toString().c_str());
         Serial.printf("[WiFi] RSSI: %d dBm\n", WiFi.RSSI());
         Serial.printf("[WiFi] Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
     } else {
         Serial.println("");
-        Serial.printf("[WiFi] ❌ WiFi connection failed! Final status: %d\n", WiFi.status());
+        Serial.printf("[WiFi] WiFi connection failed! Final status: %d\n", WiFi.status());
     }
 }
 
 void setupMQTT() {
     client.setServer(mqtt_server, mqtt_port);
-    client.setCallback(onMqttMessage);
     client.setBufferSize(512);
+    Serial.printf("[MQTT] Server configured: %s:%d\n", mqtt_server, mqtt_port);
 }
 
 void setupRTSP() {
@@ -345,12 +281,16 @@ void mqttTask(void *pvParameters) {
         
         if (client.connected()) {
             client.loop();
-            sendHeartbeat();
-        } else {
-            Serial.println("[MQTT] Still not connected after reconnect attempt");
+            
+            // Gửi heartbeat và camera status
+            if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
+                Serial.println("[MQTT] Sending camera status...");
+                publishCameraStatus();
+                lastHeartbeat = millis();
+            }
         }
         
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -364,23 +304,13 @@ void reconnectMQTT() {
         Serial.print(mqtt_port);
         Serial.print("...");
         
-        String clientId = "ESP32_CatCare_";
+        String clientId = "ESP32_CatCare_Camera_";
         clientId += String(random(0xffff), HEX);
         Serial.printf(" ClientID: %s\n", clientId.c_str());
         
         if (client.connect(clientId.c_str())) {
             Serial.println("[MQTT] Connected successfully!");
-            
-            Serial.printf("[MQTT] Subscribing to %s... ", topic_feed);
-            int result1 = client.subscribe(topic_feed);
-            Serial.printf("Result: %d\n", result1);
-            
-            Serial.printf("[MQTT] Subscribing to %s... ", topic_mode);
-            int result2 = client.subscribe(topic_mode);
-            Serial.printf("Result: %d\n", result2);
-            
-            Serial.println("[MQTT] Publishing initial status...");
-            publishStatus("online");
+            publishCameraStatus();
         } else {
             Serial.print("[MQTT] Connection failed, rc=");
             Serial.print(client.state());
@@ -391,146 +321,33 @@ void reconnectMQTT() {
     }
 }
 
-void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
-    
-    Serial.printf("Message received [%s]: %s\n", topic, message.c_str());
-    
-    if (String(topic) == topic_feed) {
-        activateFeeding(message);
-    } else if (String(topic) == topic_mode) {
-        operatingMode = message;
-        Serial.printf("Mode changed to: %s\n", operatingMode.c_str());
-    }
-}
-
-void activateFeeding(String mode) {
-    if (dailyFeedCount >= MAX_DAILY_FEEDS) {
-        Serial.println("Daily feeding limit reached!");
-        return;
-    }
-    
-    if (millis() - lastFeedTime < MIN_FEED_INTERVAL) {
-        Serial.println("Too soon since last feeding!");
-        return;
-    }
-    
-    Serial.printf("Feeding activated - Mode: %s\n", mode.c_str());
-    
-    digitalWrite(RED_LED_PIN, LOW);
-    digitalWrite(GREEN_LED_PIN, HIGH);
-    
-    for (int i = 0; i < 5; i++) {
-        digitalWrite(BUZZER_PIN, HIGH);
-        delay(200);
-        digitalWrite(BUZZER_PIN, LOW);
-        delay(200);
-    }
-    
-    feedingServo.write(180);
-    delay(5000);
-    
-    feedingServo.write(0);
-    delay(500);
-    
-    digitalWrite(GREEN_LED_PIN, LOW);
-    digitalWrite(RED_LED_PIN, HIGH);
-    
-    dailyFeedCount++;
-    lastFeedTime = millis();
-    
-    publishFeedingLog(mode);
-    Serial.printf("Feeding completed. Daily count: %d\n", dailyFeedCount);
-}
-
-void handleManualSwitch() {
-    if (millis() - lastSwitchCheck > SWITCH_DEBOUNCE) {
-        bool currentSwitchState = !digitalRead(SWITCH_PIN);
-        
-        if (currentSwitchState && !lastSwitchState) {
-            Serial.println("Manual switch pressed");
-            activateFeeding("manual");
-        }
-        
-        lastSwitchState = currentSwitchState;
-        lastSwitchCheck = millis();
-    }
-}
-
-void sendHeartbeat() {
-    static unsigned long heartbeatCount = 0;
-    
-    if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
-        heartbeatCount++;
-        Serial.printf("[HEARTBEAT] #%lu - Time since last: %lu ms\n", 
-                      heartbeatCount, millis() - lastHeartbeat);
-        
-        if (client.connected()) {
-            Serial.println("[HEARTBEAT] MQTT connected, sending status...");
-            publishStatus("online");
-        } else {
-            Serial.println("[HEARTBEAT] MQTT NOT connected, skipping status");
-        }
-        
-        lastHeartbeat = millis();
-    }
-}
-
-void publishStatus(String status) {
-    Serial.printf("[PUBLISH] Creating status message with status: %s\n", status.c_str());
-    
+void publishCameraStatus() {
     if (!client.connected()) {
-        Serial.println("[PUBLISH] ERROR: MQTT client not connected!");
+        Serial.println("[MQTT] ERROR: MQTT client not connected!");
         return;
     }
     
     DynamicJsonDocument doc(256);
-    doc["status"] = status;
-    doc["mode"] = operatingMode;
     doc["device"] = "esp32_cam";
+    doc["status"] = "online";
     doc["rtsp_url"] = "rtsp://" + WiFi.localIP().toString() + ":8554/";
-    doc["free_heap"] = ESP.getFreeHeap();
-    doc["daily_feeds"] = dailyFeedCount;
+    doc["ip"] = WiFi.localIP().toString();
     doc["fps"] = rtspServer.rtpFps;
+    doc["free_heap"] = ESP.getFreeHeap();
+    doc["quality"] = quality;
     doc["timestamp"] = millis();
     
     String jsonString;
     serializeJson(doc, jsonString);
     
-    Serial.printf("[PUBLISH] JSON payload (%d bytes): %s\n", jsonString.length(), jsonString.c_str());
-    Serial.printf("[PUBLISH] Publishing to topic: %s\n", topic_status);
+    Serial.printf("[MQTT] Publishing camera status: %s\n", jsonString.c_str());
     
-    bool result = client.publish(topic_status, jsonString.c_str(), true);
+    bool result = client.publish(topic_camera_status, jsonString.c_str(), true);
     
     if (result) {
-        Serial.println("[PUBLISH] ✅ Status published successfully!");
+        Serial.println("[MQTT] Camera status published successfully!");
     } else {
-        Serial.println("[PUBLISH] ❌ Failed to publish status!");
-        Serial.printf("[PUBLISH] Client state: %d\n", client.state());
+        Serial.println("[MQTT] Failed to publish camera status!");
+        Serial.printf("[MQTT] Client state: %d\n", client.state());
     }
-}
-
-void publishFeedingLog(String mode) {
-    DynamicJsonDocument doc(128);
-    doc["mode"] = mode;
-    doc["device"] = "esp32_cam";
-    doc["success"] = true;
-    doc["daily_count"] = dailyFeedCount;
-    
-    String jsonString;
-    serializeJson(doc, jsonString);
-    
-    client.publish(topic_feed_log, jsonString.c_str());
-}
-
-void signalStartup() {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(1000);
-    digitalWrite(BUZZER_PIN, LOW);
-    
-    digitalWrite(RED_LED_PIN, HIGH);
-    digitalWrite(GREEN_LED_PIN, LOW);
 }

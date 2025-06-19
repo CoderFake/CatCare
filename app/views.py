@@ -10,7 +10,8 @@ import json
 import time
 from .models import FeedingSchedule, FeedingLog, SystemSettings, DiseaseDetection
 from .mqtt_client import get_mqtt_manager
-from .utils import get_disease_detector, create_blank_frame
+from .utils import create_blank_frame
+from .disease_detector import get_cat_care_detector
 
 
 def login_view(request):

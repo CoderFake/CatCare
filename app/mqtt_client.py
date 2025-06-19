@@ -19,6 +19,8 @@ class MQTTManager:
         self.last_connect_time = 0
         self.connect_attempts = 0
         self.last_status_update = 0
+        self.camera_info = {}
+        self.last_camera_update = 0
         
         mqtt_settings = getattr(settings, 'MQTT_SETTINGS', {})
         self.topics = {
@@ -26,6 +28,7 @@ class MQTTManager:
             'mode': mqtt_settings.get('TOPICS', {}).get('MODE', 'catcare/mode'),
             'status': mqtt_settings.get('TOPICS', {}).get('STATUS', 'catcare/status'),
             'feed_log': mqtt_settings.get('TOPICS', {}).get('FEED_LOG', 'catcare/feed_log'),
+            'camera_status': mqtt_settings.get('TOPICS', {}).get('CAMERA_STATUS', 'catcare/camera_status'),
         }
         
         self.mqtt_settings = mqtt_settings
@@ -84,6 +87,11 @@ class MQTTManager:
                 print(f"Status update time: {self.last_status_update}")
                 print(f"Full status payload: {payload}")
                 
+                if 'rtsp_url' in payload:
+                    print(f"RTSP Stream URL (from status): {payload['rtsp_url']}")
+                    if 'fps' in payload:
+                        print(f"Current FPS: {payload['fps']}")
+                
                 from channels.layers import get_channel_layer
                 from asgiref.sync import async_to_sync
                 
@@ -101,7 +109,42 @@ class MQTTManager:
                 
             elif topic == self.topics['feed_log']:
                 print(f"Feed log received: {payload}")
+                
+                if 'rtsp_url' in payload:
+                    print(f"RTSP Stream URL: {payload['rtsp_url']}")
+                    print(f"RTSP Status: Available")
+                
                 self._handle_feed_log(payload)
+                
+            elif topic == self.topics['camera_status']:
+                print(f"=== CAMERA STATUS RECEIVED ===")
+                print(f"Device: {payload.get('device', 'unknown')}")
+                print(f"Status: {payload.get('status', 'unknown')}")
+                print(f"RTSP URL: {payload.get('rtsp_url', 'not available')}")
+                print(f"IP Address: {payload.get('ip', 'unknown')}")
+                print(f"FPS: {payload.get('fps', 0)}")
+                print(f"Free Heap: {payload.get('free_heap', 0)} bytes")
+                print(f"Camera Quality: {payload.get('quality', 'unknown')}")
+                print(f"Timestamp: {payload.get('timestamp', 0)}")
+                print(f"==============================")
+                
+                self.camera_info = payload
+                self.last_camera_update = time.time()
+                
+                # Gửi camera info qua WebSocket
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        "system_status",
+                        {
+                            "type": "camera_status_update",
+                            "camera_info": payload
+                        }
+                    )
+                    print(f"Sent camera info via WebSocket: {payload.get('rtsp_url', 'N/A')}")
             else:
                 print(f"Unknown topic '{topic}' with payload: {payload}")
                 
@@ -139,7 +182,8 @@ class MQTTManager:
                                     "mode": feed_log.mode,
                                     "timestamp": feed_log.timestamp.isoformat(),
                                     "device_id": feed_log.device_id,
-                                    "daily_count": payload.get('daily_count', 0)
+                                    "daily_count": payload.get('daily_count', 0),
+                                    "rtsp_url": payload.get('rtsp_url', '')
                                 }
                             }
                         )
@@ -220,6 +264,37 @@ class MQTTManager:
         print(f"MQTT connected: {mqtt_connected}, Device online: {device_online}")
         return mqtt_connected and device_online
     
+    def get_camera_info(self):
+        """
+        Lấy thông tin camera từ ESP32-CAM
+        """
+        current_time = time.time()
+        
+        if self.last_camera_update == 0:
+            print("Chưa nhận được camera info từ ESP32-CAM")
+            return None
+        
+        time_since_update = current_time - self.last_camera_update
+        print(f"Time since last camera update: {time_since_update:.1f} seconds")
+        
+        if time_since_update > 60:
+            print(f"Camera timeout: {time_since_update:.1f}s > 60s")
+            return None
+        
+        print(f"Current camera info: {self.camera_info}")
+        return self.camera_info
+    
+    def get_rtsp_url(self):
+        """
+        Lấy RTSP URL từ camera info
+        """
+        camera_info = self.get_camera_info()
+        if camera_info:
+            rtsp_url = camera_info.get('rtsp_url', '')
+            print(f"RTSP URL: {rtsp_url}")
+            return rtsp_url
+        return None
+    
 
     
     def debug_status(self):
@@ -237,7 +312,19 @@ class MQTTManager:
         print(f"Connect Attempts: {self.connect_attempts}")
         print(f"Subscribed Topics: {self.topics}")
         print(f"MQTT Settings: {self.mqtt_settings}")
-        print("========================")
+        
+        # Camera info
+        print("\n=== CAMERA INFO ===")
+        print(f"Last Camera Update: {self.last_camera_update}")
+        if self.last_camera_update > 0:
+            print(f"Time Since Camera Update: {current_time - self.last_camera_update:.1f}s")
+        print(f"Camera Info: {self.camera_info}")
+        if self.camera_info:
+            print(f"RTSP URL: {self.camera_info.get('rtsp_url', 'N/A')}")
+            print(f"Camera IP: {self.camera_info.get('ip', 'N/A')}")
+            print(f"Camera FPS: {self.camera_info.get('fps', 0)}")
+            print(f"Camera Status: {self.camera_info.get('status', 'unknown')}")
+        print("===================")
     
     def ensure_connection(self):
         """

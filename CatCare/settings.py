@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True) 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -108,26 +108,29 @@ MQTT_SETTINGS = {
         'FEED': os.getenv('MQTT_TOPIC_FEED', 'catcare/feed'),
         'MODE': os.getenv('MQTT_TOPIC_MODE', 'catcare/mode'),
         'STATUS': os.getenv('MQTT_TOPIC_STATUS', 'catcare/status'),
-        'IMAGE': os.getenv('MQTT_TOPIC_IMAGE', 'catcare/image'),
         'FEED_LOG': os.getenv('MQTT_TOPIC_FEED_LOG', 'catcare/feed_log'),
-        'IMAGE_CHUNK': os.getenv('MQTT_TOPIC_IMAGE_CHUNK', 'catcare/image_chunk'),
-        'DETECTION': os.getenv('MQTT_TOPIC_DETECTION', 'catcare/detection'),
-        'CAMERA_CONTROL': os.getenv('MQTT_TOPIC_CAMERA_CONTROL', 'catcare/camera_control'),
+        'CAMERA_STATUS': os.getenv('MQTT_TOPIC_CAMERA_STATUS', 'catcare/camera_status'),
     }
 }
 
+def str_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes', 'on')
+    return bool(value)
+
 CAMERA_SETTINGS = {
-    'FLIP_HORIZONTAL': os.getenv('CAMERA_FLIP_HORIZONTAL', 'True').lower() == 'true',
-    'FLIP_VERTICAL': os.getenv('CAMERA_FLIP_VERTICAL', 'True').lower() == 'true',
-    'ROTATE_180': os.getenv('CAMERA_ROTATE_180', 'False').lower() == 'true',
-    'DETECTION_ENABLED': os.getenv('CAMERA_DETECTION_ENABLED', 'True').lower() == 'true',
+    'FLIP_HORIZONTAL': str_to_bool(os.getenv('CAMERA_FLIP_HORIZONTAL', 'True')),
+    'FLIP_VERTICAL': str_to_bool(os.getenv('CAMERA_FLIP_VERTICAL', 'True')),
+    'ROTATE_180': str_to_bool(os.getenv('CAMERA_ROTATE_180', 'False')),
+    'DETECTION_ENABLED': str_to_bool(os.getenv('CAMERA_DETECTION_ENABLED', 'True')),
     'DETECTION_INTERVAL': int(os.getenv('CAMERA_DETECTION_INTERVAL', '5')),
     'DETECTION_CONFIDENCE_THRESHOLD': float(os.getenv('DETECTION_CONFIDENCE_THRESHOLD', '0.5')),
 }
 
 
-ESP32_IP = os.getenv('ESP32_IP', '192.168.88.235')
-ESP32_STREAM_URL = f"http://{ESP32_IP}/stream"
+ESP32_IP = os.getenv('ESP32_IP', '192.168.91.97')
 
 ASGI_APPLICATION = 'CatCare.asgi.application'
 
