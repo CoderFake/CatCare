@@ -55,14 +55,23 @@ def dashboard(request):
     except SystemSettings.DoesNotExist:
         system_settings = SystemSettings.objects.create(user=request.user)
     
-    today = timezone.now().date()
-
-    today_logs = FeedingLog.objects.filter(
-        user=request.user,
-        timestamp__date=today
-    )
+    import pytz
     
-    recent_logs = today_logs.order_by('-timestamp')[:10]
+    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(vietnam_tz)
+    
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    today_start_utc = today_start.astimezone(pytz.UTC)
+    today_end_utc = today_end.astimezone(pytz.UTC)
+    
+    recent_logs = FeedingLog.objects.filter(
+        user=request.user,
+        timestamp__gte=today_start_utc,
+        timestamp__lte=today_end_utc
+    ).order_by('-timestamp')[:10]
     
     schedules = FeedingSchedule.objects.filter(user=request.user, enabled=True)
     recent_diseases = DiseaseDetection.objects.filter(user=request.user)[:5]
@@ -125,19 +134,60 @@ def settings_view(request):
 @require_POST
 def manual_feed(request):
     """
-    Cho ăn thủ công - chỉ gửi lệnh, không tạo log ngay
+    Cho ăn thủ công - ngay lập tức cập nhật DB và giao diện, sau đó gửi lệnh
     """
-    mqtt_manager = get_mqtt_manager()
-    
-    if mqtt_manager.publish_feed_command('manual'):
+    try:
+        feed_log = FeedingLog.objects.create(
+            user=request.user,
+            mode='manual',
+            timestamp=timezone.now(),
+            device_id='manual_web'
+        )
+        import pytz
+        vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+        now_utc = timezone.now()
+        now_local = now_utc.astimezone(vietnam_tz)
+        
+        today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = today_start.astimezone(pytz.UTC)
+        
+        daily_count = FeedingLog.objects.filter(
+            user=request.user,
+            timestamp__gte=today_start_utc
+        ).count()
+        
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                "system_status",
+                {
+                    "type": "feed_log_update",
+                    "data": {
+                        "mode": "manual",
+                        "timestamp": feed_log.timestamp.isoformat(),
+                        "device_id": "manual_web",
+                        "daily_count": daily_count,
+                        "rtsp_url": ""
+                    }
+                }
+            )
+        
+        mqtt_manager = get_mqtt_manager()
+        mqtt_manager.publish_feed_command('manual')
+        
         return JsonResponse({
             'success': True, 
-            'message': 'Đã gửi lệnh cho ăn, đang chờ xác nhận từ thiết bị...'
+            'message': 'Đã cho ăn thành công!',
+            'daily_count': daily_count
         })
-    else:
+        
+    except Exception as e:
         return JsonResponse({
             'success': False, 
-            'message': 'Không thể kết nối với thiết bị'
+            'message': f'Lỗi: {str(e)}'
         })
 
 
@@ -261,7 +311,7 @@ def video_feed(request):
                         
         except Exception as e:
             print(f"Stream error: {str(e)}")
-            # Tạo blank frame khi có lỗi
+
             while True:
                 blank_frame = create_blank_frame(f"Lỗi kết nối: {str(e)}")
                 yield (b'--frame\r\n'
@@ -374,10 +424,17 @@ def get_status(request):
     except SystemSettings.DoesNotExist:
         current_mode = 'manual'
     
-    today = timezone.now().date()
+    import pytz
+    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(vietnam_tz)
+    
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start.astimezone(pytz.UTC)
+    
     today_logs_count = FeedingLog.objects.filter(
         user=request.user,
-        timestamp__date=today
+        timestamp__gte=today_start_utc
     ).count()
     
     return JsonResponse({
@@ -394,10 +451,15 @@ def feeding_history(request):
     """
     Lịch sử cho ăn với filter và pagination
     """
-    from datetime import date, timedelta
+    from datetime import timedelta
     from django.core.paginator import Paginator
     from django.http import HttpResponse
     import csv
+    import pytz
+    
+    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(vietnam_tz)
     
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
@@ -405,16 +467,24 @@ def feeding_history(request):
     export_excel = request.GET.get('export')
     
     if not start_date:
-        start_date = (date.today() - timedelta(days=6)).strftime('%Y-%m-%d')
+        start_date_local = now_local.date() - timedelta(days=6)
+        start_date = start_date_local.strftime('%Y-%m-%d')
     if not end_date:
-        end_date = date.today().strftime('%Y-%m-%d')
+        end_date_local = now_local.date()
+        end_date = end_date_local.strftime('%Y-%m-%d')
     
     logs = FeedingLog.objects.filter(user=request.user)
     
     if start_date:
-        logs = logs.filter(timestamp__date__gte=start_date)
+        from datetime import datetime
+        start_date_local = vietnam_tz.localize(datetime.strptime(start_date, '%Y-%m-%d'))
+        start_date_utc = start_date_local.astimezone(pytz.UTC)
+        logs = logs.filter(timestamp__gte=start_date_utc)
     if end_date:
-        logs = logs.filter(timestamp__date__lte=end_date)
+        from datetime import datetime
+        end_date_local = vietnam_tz.localize(datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59))
+        end_date_utc = end_date_local.astimezone(pytz.UTC)
+        logs = logs.filter(timestamp__lte=end_date_utc)
     
     if mode_filter:
         logs = logs.filter(mode=mode_filter)
@@ -489,17 +559,27 @@ def disease_history(request):
 
 @login_required
 def get_feeding_data(request):
-    from datetime import date
+    import pytz
+    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+    now_utc = timezone.now()
+    now_local = now_utc.astimezone(vietnam_tz)
     
-    today = date.today()
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now_local.replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    today_start_utc = today_start.astimezone(pytz.UTC)
+    today_end_utc = today_end.astimezone(pytz.UTC)
+    
     today_feed_count = FeedingLog.objects.filter(
         user=request.user,
-        timestamp__date=today
+        timestamp__gte=today_start_utc,
+        timestamp__lte=today_end_utc
     ).count()
     
     recent_feeds = FeedingLog.objects.filter(
         user=request.user,
-        timestamp__date=today
+        timestamp__gte=today_start_utc,
+        timestamp__lte=today_end_utc
     ).order_by('-timestamp')[:10]
     
     feeds_data = []

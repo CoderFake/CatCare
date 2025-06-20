@@ -28,6 +28,26 @@
         margin-bottom: 0;
         animation: slideInUp 0.3s ease-out;
     }
+    
+    .feed-log.new-feed {
+        background: linear-gradient(135deg, #e8f5e8, #d4edda);
+        border-left: 3px solid #28a745;
+        padding: 8px;
+        margin: 2px 0;
+        border-radius: 4px;
+        animation: slideInDown 0.5s ease-out;
+    }
+    
+    @keyframes slideInDown {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
 </style>
 {% endblock %}
 
@@ -281,16 +301,40 @@
                     'Content-Type': 'application/json'
                 },
                 success: function(data) {
-                if (data.success) {
-                    showAlert('success', data.message);
-                        updateFeedingData();
-                        setTimeout(updateStatus, 1000);
-                } else {
-                    showAlert('danger', data.message);
-                }
+                    if (data.success) {
+                        showAlert('success', data.message);
+                        
+                        // Cập nhật ngay daily_count nếu có
+                        if (data.daily_count !== undefined) {
+                            const $statsCard = $('.stats-card').eq(3);
+                            const $countElement = $statsCard.find('.fs-4.fw-bold');
+                            
+                            $countElement.fadeOut(200, function() {
+                                $countElement.text(data.daily_count).fadeIn(200);
+                            });
+                            
+                            $statsCard.addClass('stats-updated');
+                            setTimeout(function() {
+                                $statsCard.removeClass('stats-updated');
+                            }, 600);
+                            
+                            // Thêm vào lịch sử ngay lập tức (fallback cho WebSocket)
+                            const feedData = {
+                                mode: 'manual',
+                                timestamp: new Date().toISOString(),
+                                device_id: 'manual_web',
+                                daily_count: data.daily_count
+                            };
+                            addNewFeedToHistory(feedData);
+                        }
+                        
+                        // WebSocket sẽ tự động cập nhật phần còn lại (nếu có)
+                    } else {
+                        showAlert('danger', data.message);
+                    }
                 },
                 error: function() {
-                showAlert('danger', 'Lỗi kết nối');
+                    showAlert('danger', 'Lỗi kết nối');
                 }
             });
         }
@@ -587,7 +631,6 @@
             });
             bsToast.show();
             
-            // Remove từ DOM sau khi ẩn
             toast[0].addEventListener('hidden.bs.toast', function() {
                 toast.remove();
             });
@@ -1057,20 +1100,79 @@
             updateModeDisplay(data.current_mode);
             $('#modeSwitch').prop('checked', data.current_mode === 'auto');
             
-            const $statsCard = $('.stats-card').eq(3);
-            const $countElement = $statsCard.find('.fs-4.fw-bold');
-            $countElement.text(data.today_feeds);
+            if (data.today_feeds !== undefined) {
+                const $statsCard = $('.stats-card').eq(3);
+                const $countElement = $statsCard.find('.fs-4.fw-bold');
+                $countElement.text(data.today_feeds);
+            }
         }
         
         function handleFeedLogUpdate(feedData) {
             showAlert('success', `Đã cho ăn thành công (${feedData.mode === 'auto' ? 'Tự động' : 'Thủ công'})`);
-            updateFeedingData();
             
-            const $statsCard = $('.stats-card').eq(3);
-            $statsCard.addClass('stats-updated');
+            // Cập nhật daily_count
+            if (feedData.daily_count !== undefined) {
+                const $statsCard = $('.stats-card').eq(3);
+                const $countElement = $statsCard.find('.fs-4.fw-bold');
+                
+                $countElement.fadeOut(200, function() {
+                    $countElement.text(feedData.daily_count).fadeIn(200);
+                });
+                
+                $statsCard.addClass('stats-updated');
+                setTimeout(function() {
+                    $statsCard.removeClass('stats-updated');
+                }, 600);
+            }
+            
+            // Cập nhật lịch sử cho ăn
+            addNewFeedToHistory(feedData);
+        }
+        
+        function addNewFeedToHistory(feedData) {
+            const $container = $('.feed-logs-container');
+            
+            if ($container.length === 0) {
+                return; // Không tìm thấy container
+            }
+            
+            // Format thời gian
+            const feedTime = new Date(feedData.timestamp).toLocaleString('vi-VN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                day: '2-digit',
+                month: '2-digit'
+            });
+            
+            // Tạo HTML cho feed log mới
+            const newFeedHtml = `
+                <div class="feed-log new-feed">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span>
+                            <i class="fas fa-utensils me-1"></i>
+                            ${feedData.mode === 'auto' ? 'Tự động' : 'Thủ công'}
+                        </span>
+                        <small class="text-muted">${feedTime}</small>
+                    </div>
+                </div>
+            `;
+            
+            // Thêm vào đầu danh sách
+            $container.prepend(newFeedHtml);
+            
+            // Giữ chỉ 10 entries gần nhất
+            const $feedLogs = $container.find('.feed-log');
+            if ($feedLogs.length > 10) {
+                $feedLogs.slice(10).remove();
+            }
+            
+            // Scroll về top
+            $container.scrollTop(0);
+            
+            // Xóa class new-feed sau animation
             setTimeout(function() {
-                $statsCard.removeClass('stats-updated');
-            }, 600);
+                $('.feed-log.new-feed').removeClass('new-feed');
+            }, 500);
         }
         
         function updateDeviceStatus(status) {
@@ -1111,7 +1213,6 @@
             setupVideoWebSocket();
         };
         
-        console.log('🔍 Checking diseaseResults element:', $('#diseaseResults').length);
 
         setupVideoWebSocket();
         setupStatusWebSocket();

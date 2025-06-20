@@ -288,6 +288,34 @@ class DiseaseDetector:
         
         return result
     
+    def draw_disease_boxes(self, frame, confidence_threshold=0.5):
+        """
+        Vẽ bounding box của bệnh lên frame
+        Returns: frame with disease bounding boxes
+        """
+        result = self.detect_diseases(frame, confidence_threshold)
+        
+        if not result['success']:
+            return frame
+        
+        for disease in result['diseases']:
+            x1, y1, x2, y2 = [int(coord) for coord in disease['bbox']]
+            confidence = disease['confidence']
+            disease_name = disease['disease_vn']
+            
+            # Vẽ bounding box với màu đỏ cho bệnh
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            
+            # Vẽ label
+            label = f"{disease_name}: {confidence:.1f}%"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+            cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), 
+                         (x1 + label_size[0], y1), (0, 0, 255), -1)
+            cv2.putText(frame, label, (x1, y1 - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        return frame
+    
     def is_available(self):
         return self.model is not None
 
@@ -308,6 +336,56 @@ class CatCareDetector:
         
         cats = self.cat_detector.detect_cats(frame, confidence_threshold)
         annotated_frame = self.cat_detector.draw_cat_boxes(frame.copy(), confidence_threshold)
+        
+        return annotated_frame, cats
+    
+    def detect_cat_and_disease_realtime(self, frame, confidence_threshold=0.5):
+        """
+        Detect mèo và bệnh, vẽ cả hai bounding box cho realtime stream
+        """
+        if not self.cat_detector.is_available():
+            return frame, []
+        
+        cats = self.cat_detector.detect_cats(frame, confidence_threshold)
+        
+        # Vẽ bounding box mèo (màu xanh)
+        annotated_frame = self.cat_detector.draw_cat_boxes(frame.copy(), confidence_threshold)
+        
+        # Nếu có mèo và disease detector available, vẽ thêm bounding box bệnh
+        if cats and self.disease_detector.is_available():
+            # Crop mèo có confidence cao nhất
+            best_cat = max(cats, key=lambda x: x['confidence'])
+            x1, y1, x2, y2 = best_cat['bbox']
+            cat_image = frame[y1:y2, x1:x2]
+            
+            if cat_image.size > 0:
+                # Detect bệnh trên cropped image
+                disease_result = self.disease_detector.detect_diseases(cat_image, confidence_threshold)
+                
+                if disease_result['success'] and disease_result['diseases']:
+                    # Vẽ bounding box bệnh trên cropped area (màu đỏ)
+                    for disease in disease_result['diseases']:
+                        # Adjust coordinates to original frame
+                        dx1, dy1, dx2, dy2 = [int(coord) for coord in disease['bbox']]
+                        # Convert từ coordinate trong crop về coordinate trong frame gốc
+                        orig_x1 = x1 + dx1
+                        orig_y1 = y1 + dy1
+                        orig_x2 = x1 + dx2
+                        orig_y2 = y1 + dy2
+                        
+                        confidence = disease['confidence']
+                        disease_name = disease['disease_vn']
+                        
+                        # Vẽ bounding box bệnh (màu đỏ)
+                        cv2.rectangle(annotated_frame, (orig_x1, orig_y1), (orig_x2, orig_y2), (0, 0, 255), 2)
+                        
+                        # Vẽ label bệnh
+                        label = f"{disease_name}: {confidence:.1f}%"
+                        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+                        cv2.rectangle(annotated_frame, (orig_x1, orig_y1 - label_size[1] - 10), 
+                                     (orig_x1 + label_size[0], orig_y1), (0, 0, 255), -1)
+                        cv2.putText(annotated_frame, label, (orig_x1, orig_y1 - 5), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         return annotated_frame, cats
     

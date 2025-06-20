@@ -103,7 +103,7 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                         
                         time.sleep(1)
                         
-                        cap = cv2.VideoCapture(rtsp_url, backend_id)
+                        cap = cv2.VideoCapture(0)
                         
                         if cap.isOpened():
                             print(f"VideoCapture opened với {backend_name}")
@@ -263,6 +263,7 @@ class VideoStreamConsumer(AsyncWebsocketConsumer):
                 cats_detected = []
                 
                 if self.cat_detection_enabled and self.detector.cat_detector.is_available():
+                    # Chỉ vẽ bounding box mèo, không vẽ bệnh tự động
                     annotated_frame, cats_detected = self.detector.detect_cat_realtime(frame.copy())
                     frame = annotated_frame
                 
@@ -656,11 +657,18 @@ class SystemStatusConsumer(AsyncWebsocketConsumer):
                     except:
                         current_mode = 'manual'
                     
-                    today = timezone.now().date()
+                    import pytz
+                    vietnam_tz = pytz.timezone('Asia/Ho_Chi_Minh')
+                    now_utc = timezone.now()
+                    now_local = now_utc.astimezone(vietnam_tz)
+                    
+                    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_start_utc = today_start.astimezone(pytz.UTC)
+                    
                     today_feeds = await database_sync_to_async(
                         lambda: FeedingLog.objects.filter(
                             user=user, 
-                            timestamp__date=today
+                            timestamp__gte=today_start_utc
                         ).count()
                     )()
                     
